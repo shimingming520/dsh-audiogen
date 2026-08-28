@@ -242,6 +242,42 @@ async function openAITTS(channel: AudioChannel, request: GenerateAudioRequest, s
 async function elevenLabs(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   const base = endpointBase(channel.apiUrl)
   const model = (request.upstream ?? request.model) || 'eleven_multilingual_v2'
+  // 官方使用 xi-api-key；额外携带 Authorization Bearer 以兼容 New API 类网关。
+  const headers = {
+    'xi-api-key': channel.apiKey.trim(),
+    authorization: `Bearer ${channel.apiKey.trim()}`,
+    'content-type': 'application/json',
+    accept: 'audio/mpeg, application/json',
+  }
+
+  // ------------- ElevenLabs Music（POST /v1/music） -------------
+  // 模型：music_v1 / music_v2；prompt 与 composition_plan 二选一（引擎用 prompt）。
+  if (request.mode === 'music') {
+    const endpoint = `${base}/music`
+    const musicModel = (request.upstream ?? request.model) || 'music_v1'
+    const body: Record<string, unknown> = {
+      model_id: musicModel,
+      prompt: request.prompt,
+      ...(request.duration !== undefined && Number.isFinite(request.duration)
+        ? { music_length_ms: Math.round(Math.min(600_000, Math.max(3_000, request.duration * 1000))) }
+        : {}),
+      ...(request.lyrics !== undefined && request.lyrics.trim() !== '' ? { lyrics_text: request.lyrics.trim() } : {}),
+      ...(request.isInstrumental !== undefined ? { force_instrumental: request.isInstrumental } : {}),
+    }
+    const response = await fetchWithTimeout(endpoint, {
+      method: 'POST',
+      redirect: 'follow',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    }, UPSTREAM_TIMEOUT_MS)
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new AudioGenError(`ElevenLabs music API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
+    }
+    return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+  }
+
   const voiceId = (request.voice ?? request.model ?? model).trim()
   const endpoint = `${base}/text-to-speech/${encodeURIComponent(voiceId)}`
   const body: Record<string, unknown> = {
@@ -258,11 +294,7 @@ async function elevenLabs(channel: AudioChannel, request: GenerateAudioRequest, 
   const response = await fetchWithTimeout(endpoint, {
     method: 'POST',
     redirect: 'error',
-    headers: {
-      'xi-api-key': channel.apiKey.trim(),
-      'content-type': 'application/json',
-      accept: 'audio/mpeg, application/json',
-    },
+    headers,
     body: JSON.stringify(body),
     signal,
   }, UPSTREAM_TIMEOUT_MS)

@@ -53,7 +53,7 @@ export const AUDIO_PRESETS: AudioPresetProvider[] = [
     name: 'ElevenLabs',
     apiUrl: 'https://api.elevenlabs.io/v1',
     site: 'https://elevenlabsai.cn',
-    hint: 'ElevenLabs 语音合成（TTS）；建议点击「获取可用模型」拉取音色与模型',
+    hint: 'ElevenLabs 语音合成（TTS）与音乐生成（POST /v1/music，music_v2）；可点「获取可用模型」拉取音色与模型',
     models: [
       { alias: 'Rachel', id: '21m00Tcm4TlvDq8ikWAM', category: 'tts' },
       { alias: 'Adam', id: 'pNInz6obpgDQGcFmaJgB', category: 'tts' },
@@ -62,6 +62,9 @@ export const AUDIO_PRESETS: AudioPresetProvider[] = [
       { alias: 'eleven_multilingual_v2', id: 'eleven_multilingual_v2', category: 'tts' },
       { alias: 'eleven_turbo_v2_5', id: 'eleven_turbo_v2_5', category: 'tts' },
       { alias: 'eleven_flash_v2_5', id: 'eleven_flash_v2_5', category: 'tts' },
+      // ElevenLabs Music（POST /v1/music）
+      { alias: 'music_v2', id: 'music_v2', category: 'music' },
+      { alias: 'music_v1', id: 'music_v1', category: 'music' },
     ],
   },
   {

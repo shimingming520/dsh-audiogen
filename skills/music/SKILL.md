@@ -37,3 +37,16 @@
 ## 常见错误
 - `lyrics-required`：MiniMax 音乐生成需要歌词，或开启纯音乐。
 - `HTTP 400` 且含 `2013`：上游参数不合法，检查 lyrics / audio_setting 枚举。
+
+## ElevenLabs Music（POST /v1/music，模型 music_v1 / music_v2）
+
+| 字段 | 工具/面板参数 | 说明 |
+| --- | --- | --- |
+| model_id | model（music_v2 等） | 官方枚举：music_v1 / music_v2，默认 music_v1 |
+| prompt | prompt | 音乐/歌词主题描述（不能与 composition_plan 同用；引擎用 prompt） |
+| music_length_ms | duration（秒，自动×1000） | 3000ms - 600000ms（3s-600s），超出自动收敛区间 |
+| lyrics_text | lyrics（歌词） | 选填歌词文本 |
+| force_instrumental | is_instrumental（纯音乐） | true 保证无演唱（无词） |
+| seed / generation_mode / finetune_* | — | 高级字段，暂未透出 |
+
+> 响应为音频字节流（audio/*，常为 mp3）。请求同时携带 `xi-api-key` 与 `Authorization: Bearer`，以兼容 New API 类网关（官方站任一头即可）。
