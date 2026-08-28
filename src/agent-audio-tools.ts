@@ -219,10 +219,9 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
           type: 'object',
           additionalProperties: false,
           properties: {
-            voice_id: { type: 'string' },
-            weight: { type: 'integer' },
+            voice_id: { type: 'string', required: true },
+            weight: { type: 'integer', required: true },
           },
-          required: ['voice_id', 'weight'],
         },
         description: 'MiniMax TTS dual-voice blend weights (timbre_weights).',
       },
@@ -316,7 +315,7 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
           upstream: picked.upstream,
           channelId: picked.channel.id,
           channel: picked.channel.name,
-          prompt: args.prompt.trim(),
+          prompt: typeof args.prompt === 'string' ? args.prompt.trim() : '',
           ...base,
           ...override,
         }
