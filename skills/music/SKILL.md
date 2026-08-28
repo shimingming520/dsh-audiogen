@@ -68,3 +68,9 @@
 | output_format | format | mp3 / wav |
 
 > 引擎按模型自动收敛步数/时长区间；渠道 preset/apiUrl 含 `stability` 或模型名以 `stable-audio-` 开头即走官方协议（自定义渠道同样适用）。
+
+### 双通道（自动选择）
+- **官方 v2beta**：apiUrl 为 `https://api.stability.ai`（含 `/v2beta`、`/v2beta/audio` 形态）→ multipart 原生端点（2/2.5 同步、3 异步轮询）。
+- **OpenAI 兼容网关**：apiUrl 以 `/v1` 结尾或含 `/audio/speech`（如 New API）→ `POST {apiUrl}/audio/speech`，JSON：
+  `{ "model": "stable-audio-2.5", "input": "<prompt>", "output_format": "mp3", "duration": 30, "seed": 0, "steps": 8, "cfg_scale": 1 }`（网关把该模型映射到 Stable 上游）。
+- 一方返回 `404 Invalid URL`（未路由）时自动换另一方重试；参数在两种通道均按模型收敛（duration/seed/steps/cfg_scale/output_format）。

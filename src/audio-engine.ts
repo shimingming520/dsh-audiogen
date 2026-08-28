@@ -636,20 +636,27 @@ async function minimax(channel: AudioChannel, request: GenerateAudioRequest, sig
   }
 }
 
+/** Stability 内部信号：路由缺失（网关 404 Invalid URL），可切换另一协议重试。 */
+class StabilityRouteMissError extends Error {}
+
+/** 网关风格：apiUrl 形如 .../v1、.../v1/audio/speech 时优先 OpenAI 兼容 speech。 */
+function stabilityGatewayStyle(channel: AudioChannel): boolean {
+  const url = channel.apiUrl.trim().toLowerCase()
+  return /\/v1(\/|$|\?)/.test(url) || /\/audio\/speech(\?|$)/.test(url)
+}
+
+function isStabilityRouteMiss(status: number, detail: string): boolean {
+  return status === 404 && /invalid url|invalid_request_error/i.test(detail)
+}
+
 /**
- * Stability Stable Audio（官方 v2beta，multipart/form-data）。
- *
+ * Stable Audio 官方 v2beta（multipart/form-data）。
  * - stable-audio-3        → POST {base}/stable-audio/text-to-audio    （202 异步 → GET /v2beta/audio/results/{id} 轮询）
  * - stable-audio-2 / 2.5  → POST {base}/stable-audio-2/text-to-audio  （200 同步返回音频/JSON base64）
- * - 支持 TTS/music/sfx 三种模式：Stable Audio 为文本到音频（描述性 prompt），
- *   prompt 按模式直接透传；不同模型参数不同（steps/cfg_scale/时长上限），
- *   引擎按模型收敛：stable-audio-3: steps 4-8、duration ≤380；
- *   stable-audio-2: steps 30-100、cfg_scale 默认 7；2.5: steps 4-8、cfg_scale 默认 1。
- *
- * 请求体使用 FormData（官方 multipart），并通过 `application/json` accept 获取
- * base64 音频（2.x 同步返回 JSON；3.x 异步结果接口同样支持）。
+ * - 不同模型参数不同：stable-audio-3 steps 4-8、duration ≤380；2 steps 30-100、cfg_scale 默认 7；
+ *   2.5 steps 4-8、cfg_scale 默认 1；均支持 seed、output_format(hp3|wav)。
  */
-async function stabilityAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
+async function stabilityNativeAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   const rawBase = endpointBase(channel.apiUrl)
   const model = (request.upstream ?? request.model) || 'stable-audio-2.5'
   const isV3 = /^stable-audio-3/i.test(model)
@@ -698,6 +705,7 @@ async function stabilityAudio(channel: AudioChannel, request: GenerateAudioReque
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
+    if (isStabilityRouteMiss(response.status, detail)) throw new StabilityRouteMissError()
     throw new AudioGenError(`Stable Audio API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
   }
 
@@ -710,7 +718,6 @@ async function stabilityAudio(channel: AudioChannel, request: GenerateAudioReque
     const apiOrigin = base.replace(/\/v2beta\/audio$/i, '')
     const resultUrl = `${apiOrigin}/v2beta/audio/results/${encodeURIComponent(payload.id)}`
     const deadline = Date.now() + UPSTREAM_TIMEOUT_MS
-    let last: Response | undefined
     while (Date.now() < deadline) {
       if (signal?.aborted === true) throw new AudioGenError('Stable Audio generation was aborted', 'audio-aborted')
       const polled = await fetchWithTimeout(resultUrl, {
@@ -723,22 +730,87 @@ async function stabilityAudio(channel: AudioChannel, request: GenerateAudioReque
         signal,
       }, 60_000)
       if (polled.ok) {
-        const result = await normalizeAudioResponse(polled, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
-        return result
+        return normalizeAudioResponse(polled, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
       }
       if (polled.status === 404 || polled.status === 202) {
-        last = polled
         await new Promise(resolve => setTimeout(resolve, 5000))
         continue
       }
       const detail = await polled.text().catch(() => '')
       throw new AudioGenError(`Stable Audio result API error (HTTP ${polled.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
     }
-    void last
     throw new AudioGenError('Stable Audio generation timed out waiting for the result', 'audio-timeout')
   }
 
   return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+}
+
+/**
+ * Stable Audio 经 OpenAI 兼容网关（如 New API 的 /v1/audio/speech）：
+ * 模型名映射到 Stable 上游，JSON 体为 {model, input, output_format, duration,
+ * seed, steps, cfg_scale} —— 与官方 v2beta 字段一一对应，网关负责转发。
+ */
+async function stabilityGatewayAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
+  const rawBase = endpointBase(channel.apiUrl)
+  const model = (request.upstream ?? request.model) || 'stable-audio-2.5'
+  const isV3 = /^stable-audio-3/i.test(model)
+  const isV2 = /^stable-audio-2(\.[05])?$/i.test(model) || /^stable-audio-2-/i.test(model)
+  const endpoint = /\/audio\/speech(\?|$)/i.test(rawBase) ? rawBase : `${rawBase}/audio/speech`
+  const format = request.format === 'wav' ? 'wav' : 'mp3'
+  const body: Record<string, unknown> = {
+    model,
+    input: request.prompt,
+    output_format: format,
+    ...(request.duration !== undefined && Number.isFinite(request.duration)
+      ? { duration: Math.min(isV3 ? 380 : 190, Math.max(1, request.duration)) }
+      : {}),
+    ...(request.seed !== undefined && Number.isFinite(request.seed)
+      ? { seed: Math.floor(Math.min(4294967294, Math.max(0, request.seed))) }
+      : {}),
+    ...(request.steps !== undefined && Number.isInteger(request.steps)
+      ? { steps: Math.min(isV2 && !/2\.5/i.test(model) ? 100 : 8, Math.max(isV2 && !/2\.5/i.test(model) ? 30 : 4, request.steps)) }
+      : {}),
+    ...(request.cfgScale !== undefined && Number.isFinite(request.cfgScale)
+      ? { cfg_scale: Math.min(25, Math.max(1, request.cfgScale)) }
+      : {}),
+  }
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    redirect: 'follow',
+    headers: {
+      authorization: `Bearer ${channel.apiKey.trim()}`,
+      accept: 'audio/*',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+    signal,
+  }, UPSTREAM_TIMEOUT_MS)
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    if (isStabilityRouteMiss(response.status, detail)) throw new StabilityRouteMissError()
+    throw new AudioGenError(`Stable Audio gateway API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
+  }
+  return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+}
+
+/**
+ * 稳定性入口：优先官方 v2beta（api.stability.ai / v2beta 形态），
+ * 网关形态（apiUrl 以 /v1 结尾或已含 /audio/speech）优先 OpenAI 兼容；
+ * 一方返回 404 Invalid URL（未路由）时自动换另一方重试。
+ */
+async function stabilityAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
+  const styles: Array<'native' | 'gateway'> = stabilityGatewayStyle(channel) ? ['gateway', 'native'] : ['native', 'gateway']
+  let lastError: Error | undefined
+  for (const style of styles) {
+    try {
+      if (style === 'gateway') return await stabilityGatewayAudio(channel, request, signal)
+      return await stabilityNativeAudio(channel, request, signal)
+    } catch (error) {
+      if (!(error instanceof StabilityRouteMissError)) throw error
+      lastError = error
+    }
+  }
+  throw lastError ?? new AudioGenError('Stable Audio 渠道未配置或不可达', 'audio-api-error')
 }
 
 async function genericAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
