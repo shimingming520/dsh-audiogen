@@ -74,10 +74,11 @@ export const AUDIO_PRESETS: AudioPresetProvider[] = [
     name: 'Stability AI（stable-audio）',
     apiUrl: 'https://api.stability.ai/v2beta/audio',
     site: 'https://stability.ai/stable-audio',
-    hint: 'Stability AI 音乐 / 音效生成（stable-audio 系列）',
+    hint: 'Stability AI 文本到音频（TTS 描述 / 音乐 / 音效，stable-audio 系列；stable-audio-3 为异步任务）',
     models: [
-      { alias: 'stable-audio-2.0', id: 'stable-audio-2.0', category: 'music' },
-      { alias: 'stable-audio-1.0', id: 'stable-audio-1.0', category: 'music' },
+      { alias: 'stable-audio-3', id: 'stable-audio-3', category: 'music' },
+      { alias: 'stable-audio-2.5', id: 'stable-audio-2.5', category: 'music' },
+      { alias: 'stable-audio-2', id: 'stable-audio-2', category: 'music' },
     ],
   },
 ]

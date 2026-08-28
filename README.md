@@ -12,6 +12,11 @@ DeepSeek Harness（DSH）AI 音频插件：让 Agent 不只会回答，还能生
 - Agent 可通过 `generate_audio` 工具生成音频，并在对话工具结果中直接播放 / 下载。
 - API 密钥保存在 DSH 宿主侧，浏览器与 Agent 不接触明文密钥。
 - 生成历史持久化在 `~/.dsh/dsh-audiogen/`。
+- **资源库**：生成的音频可勾选「加入资源库」（或设置中开启自动保存），按类型分目录存放
+  （`voice/male|female|custom`、`music`、`sfx`、`tts/<音色键>`），每条资源都带完整溯源
+  （渠道、模型与上游 ID、音色 voiceId、提示词、参数快照）。资源库支持搜索、标签、
+  重命名、移动分类、批量管理与详情抽屉（可复制参数 / 复用音色）。
+- Agent 亦可调用 `search_audio_library` 检索本地资源库，复用已有音色/配乐/音效。
 
 ## 安装
 
@@ -35,7 +40,8 @@ dsh plugin --profile web add /path/to/dsh-audiogen
 
 | 工具 | 用途 |
 | --- | --- |
-| `generate_audio` | 提交 TTS / 音乐 / 音效生成，等待完成后返回同源音频 URL。 |
+| `generate_audio` | 提交 TTS / 音乐 / 音效生成，等待完成后返回同源音频 URL；可选 `save_to_library` 入库。 |
+| `search_audio_library` | 检索本地资源库（类型/分类/关键词），返回资源、溯源与音频 URL。 |
 
 示例：
 

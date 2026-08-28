@@ -51,6 +51,11 @@ dsh-audiogen/
 - [x] 支持组合能力：先设计描述，再用 `generate_audio` 生成。
 - [x] 已构建 `lib/`，可通过 `dsh plugin add /path/to/dsh-audiogen` 或 tarball 安装。
 - [x] 已提交到本地 Git（可继续推送 GitHub）。
+- [x] v0.4.0 资源库：生成结果可入库（生成前勾选 / 结果卡星标 / 设置自动入库），按类型分目录
+      （voice/male|female|custom、music、sfx、tts/<音色键>），完整溯源（渠道/模型/音色/参数快照），
+      资源库支持搜索、标签、重命名、移动分类、批量管理与详情抽屉（复制参数 / 复用音色）；
+      Agent 侧新增 `save_to_library` 参数与 `search_audio_library` 工具；
+      面板重构为「生成 | 资源库」双 Tab，自定义播放器整体美化。
 - [ ] 真机验证各厂商接口字段；按需补充更多预置厂商。
 
 ## 新会话开发提示

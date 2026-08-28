@@ -13,10 +13,11 @@ import { SettingsConflictError, settingsNamespace, type SettingsDescriptor } fro
 import { generateAudio, AudioGenError, type AudioChannel } from './audio-engine.ts'
 import { discoverAudioModels } from './audio-models.ts'
 import { AUDIO_PRESETS } from './audio-presets.ts'
-import { appendHistory, clearHistory, listHistory, readAudioFile, removeHistory, saveAudioFile } from './audio-store.ts'
+import { appendHistory, clearHistory, listHistory, readAudioFile, removeHistory, saveAudioFile, listLibrary, saveToLibrary, updateLibraryEntry, removeLibraryEntries, readLibraryFile } from './audio-store.ts'
 import {
-  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, GENERATE_API, HISTORY_API, MODEL_API, PRESETS_API, SETTINGS_API,
-  type GenerateAudioRequest, type GeneratedAudio, type HistoryEntryInput,
+  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, GENERATE_API, HISTORY_API, LIBRARY_API, MODEL_API, PRESETS_API, SETTINGS_API,
+  LIBRARY_TYPES,
+  type GenerateAudioRequest, type GeneratedAudio, type HistoryEntryInput, type LibraryAudioInput, type LibraryProvenance, type LibraryType,
 } from './protocol.ts'
 
 const MAX_JSON_BODY_BYTES = 16 * 1024 * 1024
@@ -38,6 +39,8 @@ export interface ChannelsView {
 export interface AudiogenRoutesDeps {
   settings: SettingsSeam
   resolveChannels: () => ChannelsView
+  /** Whether the auto-save-to-library setting is on. */
+  autoSave: () => boolean
 }
 
 function isLoopbackRequest(request: IncomingMessage): boolean {
@@ -126,6 +129,9 @@ function parseGenerateRequest(body: Record<string, unknown>): GenerateAudioReque
     ...(typeof body.isInstrumental === 'boolean' ? { isInstrumental: body.isInstrumental } : {}),
     ...(typeof body.loop === 'boolean' ? { loop: body.loop } : {}),
     ...(num(body.promptInfluence) !== undefined ? { promptInfluence: num(body.promptInfluence)! } : {}),
+    ...(num(body.seed) !== undefined ? { seed: num(body.seed)! } : {}),
+    ...(num(body.steps) !== undefined ? { steps: num(body.steps)! } : {}),
+    ...(num(body.cfgScale) !== undefined ? { cfgScale: num(body.cfgScale)! } : {}),
     ...(typeof body.format === 'string' && body.format.trim() !== '' ? { format: body.format.trim() } : {}),
     ...(typeof body.channelId === 'string' && body.channelId !== '' ? { channelId: body.channelId } : {}),
     // ---- MiniMax TTS 专属字段（其他厂商忽略） ----
@@ -144,6 +150,7 @@ function parseGenerateRequest(body: Record<string, unknown>): GenerateAudioReque
     ...(str(body.languageBoost) !== undefined ? { languageBoost: str(body.languageBoost)! } : {}),
     ...(voiceModify !== undefined ? { voiceModify } : {}),
     ...(timbreWeights !== undefined && timbreWeights.length > 0 ? { timbreWeights } : {}),
+    ...(flag(body.saveToLibrary) !== undefined ? { saveToLibrary: flag(body.saveToLibrary)! } : {}),
   }
 }
 
@@ -206,6 +213,74 @@ function resolveChannelRequest(
   const picked = target !== undefined && target.models.some(model => model.alias === asked) ? target : hosting[0]!
   const mapping = picked.models.find(model => model.alias === asked)!
   return { ok: true, request: { ...request, model: asked, upstream: mapping.id, channelId: picked.id, channel: picked.name } }
+}
+
+/** Build the library type from a generation mode (voice_design → voice). */
+function libraryTypeOf(mode: GenerateAudioRequest['mode']): LibraryType {
+  if (mode === 'voice_design') return 'voice'
+  return mode
+}
+
+/** Provenance snapshot straight from a resolved generate request. */
+function provenanceOf(request: GenerateAudioRequest, apiUrl: string): LibraryProvenance {
+  return {
+    mode: request.mode,
+    prompt: request.prompt,
+    ...(request.channel === undefined ? {} : { channel: request.channel }),
+    ...(request.channelId === undefined ? {} : { channelId: request.channelId }),
+    ...(apiUrl === '' ? {} : { apiUrl }),
+    ...(request.model === undefined || request.model === '' ? {} : { model: request.model }),
+    ...(request.upstream === undefined || request.upstream === '' ? {} : { upstream: request.upstream }),
+    ...(request.voice === undefined ? {} : { voice: request.voice }),
+    params: { ...request },
+  }
+}
+
+const strOf = (value: unknown): string | undefined => typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+const strListOf = (value: unknown): string[] | undefined =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map(item => item.trim()) : undefined
+const parseModeOf = (value: unknown): GenerateAudioRequest['mode'] =>
+  value === 'music' ? 'music' : value === 'sfx' ? 'sfx' : value === 'voice_design' ? 'voice_design' : 'tts'
+const parseLibraryTypeOf = (value: unknown): LibraryType | undefined =>
+  (LIBRARY_TYPES as readonly unknown[]).includes(value) ? value as LibraryType : undefined
+
+/** File name (audio/ id.ext) from a same-origin audio url. */
+function historyFileIdOf(url: string): string {
+  try {
+    return decodeURIComponent(new URL(url, 'http://localhost').pathname.split('/').pop() ?? '')
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Fill missing provenance fields from host-persisted history (which carries
+ * the resolved request snapshot) and the channel catalog. Client-supplied
+ * values win when present.
+ */
+async function mergeLibraryProvenance(
+  given: LibraryProvenance,
+  files: LibraryAudioInput[],
+  channels: AudioChannel[],
+): Promise<LibraryProvenance> {
+  const wanted = new Set(files.map(file => file.file))
+  const history = await listHistory()
+  const entry = history.find(candidate => candidate.audio.some(audio => wanted.has(historyFileIdOf(audio.url))))
+  const params = entry?.params !== undefined && typeof entry.params === 'object' ? entry.params : undefined
+  const channel = channels.find(candidate => candidate.id === (entry?.channelId ?? ''))
+  return {
+    mode: entry?.mode ?? given.mode,
+    prompt: given.prompt !== '' ? given.prompt : (entry?.prompt ?? ''),
+    ...(given.channel !== undefined || entry?.channel !== undefined ? { channel: given.channel ?? entry?.channel } : {}),
+    ...(given.channelId !== undefined || entry?.channelId !== undefined ? { channelId: given.channelId ?? entry?.channelId } : {}),
+    ...((given.apiUrl ?? channel?.apiUrl ?? '') === '' ? {} : { apiUrl: given.apiUrl ?? channel?.apiUrl }),
+    ...(given.model !== undefined || entry?.model !== undefined ? { model: given.model ?? entry?.model } : {}),
+    ...((given.upstream ?? (typeof params?.upstream === 'string' ? params.upstream : undefined)) !== undefined
+      ? { upstream: given.upstream ?? (typeof params?.upstream === 'string' ? params.upstream : undefined) } : {}),
+    ...(given.voice !== undefined || entry?.voice !== undefined ? { voice: given.voice ?? entry?.voice } : {}),
+    ...(given.voiceId !== undefined || entry?.voiceId !== undefined ? { voiceId: given.voiceId ?? entry?.voiceId } : {}),
+    ...(given.params !== undefined || params !== undefined ? { params: given.params ?? params } : {}),
+  }
 }
 
 /** Build every /api/dsh-audiogen route. */
@@ -348,6 +423,7 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
             const saved = await saveAudioFile(output.data, output.mime, `generated-${index + 1}`)
             generated.push({
               id: saved.id,
+              file: saved.file,
               b64: Buffer.from(output.data).toString('base64'),
               mime: saved.mime,
               bytes: saved.bytes,
@@ -355,6 +431,7 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
               ...(output.voiceId === undefined ? {} : { voiceId: output.voiceId }),
             })
           }
+          const paramsSnapshot: Record<string, unknown> = { ...request }
           let history
           try {
             history = await appendHistory({
@@ -370,12 +447,33 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
               audio: generated,
               ...(request.channelId === undefined ? {} : { channelId: request.channelId }),
               ...(request.channel === undefined ? {} : { channel: request.channel }),
+              params: paramsSnapshot,
             })
           } catch (error) {
             writeJson(res, 200, { ok: true, outputs: generated, historyError: messageOf(error) })
             return
           }
-          writeJson(res, 200, { ok: true, outputs: generated, history })
+          // ---- 资源库：单次勾选或设置自动入库（saveToLibrary === false 显式跳过） ----
+          const wantSave = request.saveToLibrary === true || (deps.autoSave() && request.saveToLibrary !== false)
+          let resources: Array<{ id: string; name: string; type: LibraryType }> | undefined
+          if (wantSave) {
+            try {
+              const entry = await saveToLibrary({
+                audioFiles: generated.map(audio => ({
+                  id: audio.id,
+                  file: audio.file,
+                  mime: audio.mime,
+                  ...(audio.voiceId === undefined ? {} : { voiceId: audio.voiceId }),
+                })),
+                type: libraryTypeOf(request.mode),
+                provenance: provenanceOf(request, channel.apiUrl),
+              })
+              resources = [{ id: entry.id, name: entry.name, type: entry.type }]
+            } catch {
+              // library-save is best-effort: generation and history already succeeded
+            }
+          }
+          writeJson(res, 200, { ok: true, outputs: generated, history, ...(resources === undefined ? {} : { resources }) })
         } catch (error) {
           const code = error instanceof AudioGenError ? error.code : 'generate-failed'
           writeJson(res, 200, { ok: false, code, message: messageOf(error) })
@@ -410,6 +508,141 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
           'content-length': stored.bytes,
           'cache-control': 'private, max-age=3600',
         })
+        res.end(stored.data)
+      },
+    },
+    // ------------------------------------------------------- resource library
+    {
+      kind: 'exact', path: LIBRARY_API.list,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        writeJson(res, 200, { ok: true, entries: await listLibrary() })
+      },
+    },
+    {
+      kind: 'exact', path: LIBRARY_API.save,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const audioFiles: LibraryAudioInput[] = Array.isArray(body?.audioFiles)
+          ? body.audioFiles
+            .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+            .map(item => ({
+              id: strOf(item.id) ?? '',
+              file: strOf(item.file) ?? '',
+              mime: strOf(item.mime) ?? 'audio/mpeg',
+              ...(strOf(item.voiceId) !== undefined ? { voiceId: strOf(item.voiceId)! } : {}),
+              ...(typeof item.duration === 'number' && Number.isFinite(item.duration) ? { duration: item.duration } : {}),
+            }))
+            .filter(item => item.id !== '' && item.file !== '')
+          : []
+        if (audioFiles.length === 0) {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '没有可入库的音频文件' })
+          return
+        }
+        const type = parseLibraryTypeOf(body?.type)
+        if (type === undefined) {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '资源类型无效（voice/music/sfx/tts）' })
+          return
+        }
+        const rawProvenance = typeof body?.provenance === 'object' && body.provenance !== null ? body.provenance as Record<string, unknown> : {}
+        const provenance = await mergeLibraryProvenance({
+          mode: parseModeOf(rawProvenance.mode),
+          prompt: typeof rawProvenance.prompt === 'string' ? rawProvenance.prompt.trim() : '',
+          ...(strOf(rawProvenance.channel) !== undefined ? { channel: strOf(rawProvenance.channel)! } : {}),
+          ...(strOf(rawProvenance.channelId) !== undefined ? { channelId: strOf(rawProvenance.channelId)! } : {}),
+          ...(strOf(rawProvenance.apiUrl) !== undefined ? { apiUrl: strOf(rawProvenance.apiUrl)! } : {}),
+          ...(strOf(rawProvenance.model) !== undefined ? { model: strOf(rawProvenance.model)! } : {}),
+          ...(strOf(rawProvenance.upstream) !== undefined ? { upstream: strOf(rawProvenance.upstream)! } : {}),
+          ...(strOf(rawProvenance.voice) !== undefined ? { voice: strOf(rawProvenance.voice)! } : {}),
+          ...(strOf(rawProvenance.voiceId) !== undefined ? { voiceId: strOf(rawProvenance.voiceId)! } : {}),
+          ...(typeof rawProvenance.params === 'object' && rawProvenance.params !== null
+            ? { params: rawProvenance.params as Record<string, unknown> } : {}),
+        }, audioFiles, deps.resolveChannels().channels)
+        try {
+          const entry = await saveToLibrary({
+            audioFiles,
+            type,
+            ...(strOf(body?.category) !== undefined ? { category: strOf(body?.category)! } : {}),
+            ...(strOf(body?.name) !== undefined ? { name: strOf(body?.name)! } : {}),
+            ...(strListOf(body?.tags) !== undefined ? { tags: strListOf(body?.tags)! } : {}),
+            ...(strOf(body?.note) !== undefined ? { note: strOf(body?.note)! } : {}),
+            provenance,
+          })
+          writeJson(res, 200, { ok: true, entry })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'library-save-failed', message: messageOf(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact', path: LIBRARY_API.update,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const id = strOf(body?.id)
+        if (id === undefined) {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '缺少资源 id' })
+          return
+        }
+        try {
+          const entry = await updateLibraryEntry(id, {
+            ...(strOf(body?.name) !== undefined ? { name: strOf(body?.name)! } : {}),
+            ...(strListOf(body?.tags) !== undefined ? { tags: strListOf(body?.tags)! } : {}),
+            ...(typeof body?.note === 'string' ? { note: body.note } : {}),
+            ...(strOf(body?.category) !== undefined ? { category: strOf(body?.category)! } : {}),
+            ...(parseLibraryTypeOf(body?.type) !== undefined ? { type: parseLibraryTypeOf(body?.type)! } : {}),
+          })
+          if (entry === undefined) {
+            writeJson(res, 200, { ok: false, code: 'not-found', message: '资源不存在' })
+            return
+          }
+          writeJson(res, 200, { ok: true, entry })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'library-update-failed', message: messageOf(error) })
+        }
+      },
+    },
+    {
+      kind: 'exact', path: LIBRARY_API.remove,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const ids = strListOf(body?.ids) ?? []
+        if (ids.length === 0) {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: '缺少资源 id' })
+          return
+        }
+        try {
+          const entries = await removeLibraryEntries(ids)
+          writeJson(res, 200, { ok: true, entries })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'library-remove-failed', message: messageOf(error) })
+        }
+      },
+    },
+    {
+      kind: 'prefix', path: LIBRARY_API.audio,
+      handler: async (req, res) => {
+        if (!isLoopbackRequest(req)) {
+          writeJson(res, 403, { error: 'forbidden: loopback-only' })
+          return
+        }
+        if (req.method !== 'GET') {
+          writeJson(res, 405, { error: `method not allowed: ${req.method}` })
+          return
+        }
+        const rel = audioFileFrom(req.url, LIBRARY_API.audio)
+        if (rel === undefined) {
+          writeJson(res, 400, { error: 'invalid library audio' })
+          return
+        }
+        const stored = await readLibraryFile(rel)
+        if (stored === undefined) {
+          writeJson(res, 404, { error: 'library audio not found' })
+          return
+        }
+        res.writeHead(200, { 'content-type': stored.mime, 'content-length': stored.bytes, 'cache-control': 'private, max-age=3600' })
         res.end(stored.data)
       },
     },

@@ -29,6 +29,8 @@ export interface AudiogenConfig {
   /** Channel used when a request does not name one. */
   defaultChannelId?: string
   defaultModel?: string
+  /** 生成完成后自动保存到资源库（面板与 Agent 生成均生效）。 */
+  autoSaveToLibrary?: boolean
 }
 
 /** One settings path-op as the bridge consumes it. */

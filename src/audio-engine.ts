@@ -63,7 +63,13 @@ export function detectAudioMime(data: Uint8Array): string | undefined {
 
 function mimeFromContentType(value: string | null): string | undefined {
   if (value === null || value === '') return undefined
-  return value.split(';')[0]!.trim().toLowerCase()
+  const parts = value.split(';')
+  for (const part of parts.slice(1)) {
+    // `application/json; type=audio/mpeg` —— Stability 官方用该形式携带音频真实类型。
+    const match = /^\s*type=([^;\s]+)/i.exec(part)
+    if (match !== null) return match[1]!.trim().toLowerCase()
+  }
+  return parts[0]!.trim().toLowerCase()
 }
 
 function audioMime(data: Uint8Array, contentType: string | null): string {
@@ -630,27 +636,108 @@ async function minimax(channel: AudioChannel, request: GenerateAudioRequest, sig
   }
 }
 
+/**
+ * Stability Stable Audio（官方 v2beta，multipart/form-data）。
+ *
+ * - stable-audio-3        → POST {base}/stable-audio/text-to-audio    （202 异步 → GET /v2beta/audio/results/{id} 轮询）
+ * - stable-audio-2 / 2.5  → POST {base}/stable-audio-2/text-to-audio  （200 同步返回音频/JSON base64）
+ * - 支持 TTS/music/sfx 三种模式：Stable Audio 为文本到音频（描述性 prompt），
+ *   prompt 按模式直接透传；不同模型参数不同（steps/cfg_scale/时长上限），
+ *   引擎按模型收敛：stable-audio-3: steps 4-8、duration ≤380；
+ *   stable-audio-2: steps 30-100、cfg_scale 默认 7；2.5: steps 4-8、cfg_scale 默认 1。
+ *
+ * 请求体使用 FormData（官方 multipart），并通过 `application/json` accept 获取
+ * base64 音频（2.x 同步返回 JSON；3.x 异步结果接口同样支持）。
+ */
 async function stabilityAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
-  const base = endpointBase(channel.apiUrl)
-  const endpoint = /\/generation(\?|$)/i.test(base) ? base : `${base}/generation`
-  const model = (request.upstream ?? request.model) || 'stable-audio-2.0'
-  const body: Record<string, unknown> = {
-    model,
-    prompt: request.prompt,
-    ...(request.duration !== undefined ? { duration: request.duration } : {}),
-    ...(request.format !== undefined ? { output_format: request.format } : {}),
+  const rawBase = endpointBase(channel.apiUrl)
+  const model = (request.upstream ?? request.model) || 'stable-audio-2.5'
+  const isV3 = /^stable-audio-3/i.test(model)
+  const isV2 = /^stable-audio-2(\.[05])?$/i.test(model) || /^stable-audio-2-/i.test(model)
+  const group = isV2 ? 'stable-audio-2' : 'stable-audio'
+
+  // 规范化 base：允许 apiUrl 为 `https://api.stability.ai` / `.../v2beta` / `.../v2beta/audio`
+  const base = /\/v2beta\/audio$/i.test(rawBase)
+    ? rawBase
+    : /\/v2beta$/i.test(rawBase)
+      ? `${rawBase}/audio`
+      : `${rawBase}/v2beta/audio`
+  const endpoint = `${base}/${group}/text-to-audio`
+
+  const form = new FormData()
+  form.set('prompt', request.prompt)
+  form.set('model', model)
+  if (request.duration !== undefined && Number.isFinite(request.duration)) {
+    const maxDuration = isV3 ? 380 : 190
+    form.set('duration', String(Math.min(maxDuration, Math.max(1, request.duration))))
   }
+  if (request.seed !== undefined && Number.isFinite(request.seed)) {
+    form.set('seed', String(Math.floor(Math.min(4294967294, Math.max(0, request.seed)))))
+  }
+  const format = request.format === 'wav' ? 'wav' : 'mp3'
+  form.set('output_format', format)
+  if (request.steps !== undefined && Number.isInteger(request.steps)) {
+    const minSteps = isV2 && !/2\.5/i.test(model) ? 30 : 4
+    const maxSteps = isV2 && !/2\.5/i.test(model) ? 100 : 8
+    form.set('steps', String(Math.min(maxSteps, Math.max(minSteps, request.steps))))
+  }
+  if (request.cfgScale !== undefined && Number.isFinite(request.cfgScale)) {
+    form.set('cfg_scale', String(Math.min(25, Math.max(1, request.cfgScale))))
+  }
+
   const response = await fetchWithTimeout(endpoint, {
     method: 'POST',
     redirect: 'error',
     headers: {
       authorization: `Bearer ${channel.apiKey.trim()}`,
-      'content-type': 'application/json',
-      accept: 'application/json, audio/mpeg, audio/wav',
+      accept: 'application/json',
     },
-    body: JSON.stringify(body),
+    body: form,
     signal,
-  }, UPSTREAM_TIMEOUT_MS)
+  }, isV3 ? 60_000 : UPSTREAM_TIMEOUT_MS)
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new AudioGenError(`Stable Audio API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
+  }
+
+  // stable-audio-3 异步：202 → 轮询结果
+  if (response.status === 202) {
+    const payload = await response.json().catch(() => ({})) as { id?: string }
+    if (payload.id === undefined || payload.id === '') {
+      throw new AudioGenError('Stable Audio accepted the job but returned no result id', 'audio-empty-result')
+    }
+    const apiOrigin = base.replace(/\/v2beta\/audio$/i, '')
+    const resultUrl = `${apiOrigin}/v2beta/audio/results/${encodeURIComponent(payload.id)}`
+    const deadline = Date.now() + UPSTREAM_TIMEOUT_MS
+    let last: Response | undefined
+    while (Date.now() < deadline) {
+      if (signal?.aborted === true) throw new AudioGenError('Stable Audio generation was aborted', 'audio-aborted')
+      const polled = await fetchWithTimeout(resultUrl, {
+        method: 'GET',
+        redirect: 'error',
+        headers: {
+          authorization: `Bearer ${channel.apiKey.trim()}`,
+          accept: 'application/json',
+        },
+        signal,
+      }, 60_000)
+      if (polled.ok) {
+        const result = await normalizeAudioResponse(polled, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+        return result
+      }
+      if (polled.status === 404 || polled.status === 202) {
+        last = polled
+        await new Promise(resolve => setTimeout(resolve, 5000))
+        continue
+      }
+      const detail = await polled.text().catch(() => '')
+      throw new AudioGenError(`Stable Audio result API error (HTTP ${polled.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
+    }
+    void last
+    throw new AudioGenError('Stable Audio generation timed out waiting for the result', 'audio-timeout')
+  }
+
   return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
 }
 
@@ -701,7 +788,10 @@ export async function generateAudio(
 
   if (isElevenLabs(channel)) return elevenLabs(channel, request, signal)
   if (isMiniMax(channel)) return minimax(channel, request, signal)
-  if (isStability(channel)) return stabilityAudio(channel, request, signal)
+  // 稳定性渠道或模型名明确为 stable-audio-*（含自定义渠道）→ 走官方 Stable Audio 协议
+  if (isStability(channel) || /^stable-audio-/i.test(((request.upstream ?? request.model) || '').trim())) {
+    return stabilityAudio(channel, request, signal)
+  }
   if (isOpenAICompatible(channel, request.mode)) return openAITTS(channel, request, signal)
   return genericAudio(channel, request, signal)
 }

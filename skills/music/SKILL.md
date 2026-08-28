@@ -50,3 +50,21 @@
 | seed / generation_mode / finetune_* | — | 高级字段，暂未透出 |
 
 > 响应为音频字节流（audio/*，常为 mp3）。请求同时携带 `xi-api-key` 与 `Authorization: Bearer`，以兼容 New API 类网关（官方站任一头即可）。
+
+## Stability Stable Audio（官方 v2beta，multipart/form-data）
+
+官方端点（文本到音频，TTS 描述 / 音乐 / 音效统一走该接口，不同模型参数不同）：
+- `POST /v2beta/audio/stable-audio/text-to-audio` → 模型 `stable-audio-3`（202 异步，随后轮询 GET /v2beta/audio/results/{id}）
+- `POST /v2beta/audio/stable-audio-2/text-to-audio` → 模型 `stable-audio-2` / `stable-audio-2.5`（同步返回音频）
+
+| 字段 | 工具/面板参数 | 说明 |
+| --- | --- | --- |
+| prompt | prompt | 必填，描述性提示词（乐器/情绪/风格/体裁，≤10000 字符） |
+| model | model | stable-audio-3 / stable-audio-2.5 / stable-audio-2 |
+| duration | duration | 秒数：3 ≤380（默认 190）；2/2.5 ≤190（默认 190） |
+| seed | seed | 0-4294967294，默认 0=随机；同参数同 seed 可复现 |
+| steps | steps | 采样步数：2 → 30-100（默认 50）；2.5/3 → 4-8（默认 8） |
+| cfg_scale | cfg_scale | 1-25：2 默认 7，2.5/3 默认 1；越高越贴提示词 |
+| output_format | format | mp3 / wav |
+
+> 引擎按模型自动收敛步数/时长区间；渠道 preset/apiUrl 含 `stability` 或模型名以 `stable-audio-` 开头即走官方协议（自定义渠道同样适用）。

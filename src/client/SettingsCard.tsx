@@ -27,6 +27,7 @@ export interface AudioGenSettings {
   announceToAgent?: boolean
   allowAgentAudioGeneration?: boolean
   defaultModel?: string
+  autoSaveToLibrary?: boolean
 }
 
 export interface AudioGenSettingsCardState extends CardShell {
@@ -35,6 +36,7 @@ export interface AudioGenSettingsCardState extends CardShell {
   announceToAgent: CardFieldState
   allowAgentAudioGeneration: CardFieldState
   defaultModel: CardFieldState
+  autoSaveToLibrary: CardFieldState
 }
 
 export interface AudioGenSettingsCardFace extends CardActions {
@@ -54,6 +56,7 @@ export class AudioGenSettingsCardController {
       booleanField('announceToAgent'),
       booleanField('allowAgentAudioGeneration'),
       textField('defaultModel'),
+      booleanField('autoSaveToLibrary'),
     ])
     this.channelsForm = new ChannelsForm(scope)
   }
@@ -68,6 +71,7 @@ export class AudioGenSettingsCardController {
       announceToAgent: this.form.field('announceToAgent'),
       allowAgentAudioGeneration: this.form.field('allowAgentAudioGeneration'),
       defaultModel: this.form.field('defaultModel'),
+      autoSaveToLibrary: this.form.field('autoSaveToLibrary'),
     }
   }
 
@@ -712,6 +716,11 @@ export function AudioGenSettingsCard(props: AudioGenSettingsCardProps) {
           <div className={css.field}>
             <label className={css.label}>
               <input type="checkbox" checked={state.allowAgentAudioGeneration.text === 'true' || state.allowAgentAudioGeneration.text === ''} disabled={!state.writable} onChange={event => props.edit('allowAgentAudioGeneration', String(event.target.checked))} /> {t('settings.allowAgentAudio')}
+            </label>
+          </div>
+          <div className={css.field}>
+            <label className={css.label}>
+              <input type="checkbox" checked={state.autoSaveToLibrary.text === 'true'} disabled={!state.writable} onChange={event => props.edit('autoSaveToLibrary', String(event.target.checked))} /> {t('settings.autoSaveLibrary')}
             </label>
           </div>
           <div className={css.footer}>

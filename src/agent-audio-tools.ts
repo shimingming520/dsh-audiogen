@@ -9,14 +9,15 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { randomUUID } from 'node:crypto'
 import type { AudioChannel } from './audio-engine.ts'
 import { generateAudio, AudioGenError } from './audio-engine.ts'
-import { appendHistory, saveAudioFile } from './audio-store.ts'
-import type { AudioMode, GenerateAudioRequest } from './protocol.ts'
+import { appendHistory, saveAudioFile, saveToLibrary, listLibrary } from './audio-store.ts'
+import type { AudioMode, GenerateAudioRequest, LibraryType } from './protocol.ts'
 
 export interface AgentAudioToolConfig {
   enabled: boolean
   allowAgentAudioGeneration: boolean
   channels: AudioChannel[]
   defaultChannelId: string
+  autoSaveToLibrary: boolean
 }
 
 interface AgentAudioRef {
@@ -27,12 +28,19 @@ interface AgentAudioRef {
   voiceId?: string
 }
 
+/** Internal: the persisted file name, needed for library copies. */
+interface SavedAudioRef extends AgentAudioRef {
+  file: string
+}
+
 interface AgentAudioResult {
   status: string
   message: string
   mode: AudioMode
   model: string
   audio: AgentAudioRef[]
+  /** Resource-library entry ids when the audio was saved to the library. */
+  resources?: string[]
   error?: string
 }
 
@@ -57,6 +65,7 @@ const resultSchema = {
     mode: { type: 'string', required: true, enum: ['tts', 'music', 'sfx', 'voice_design'] },
     model: { type: 'string', required: true },
     audio: { type: 'array', required: true, items: audioRefSchema },
+    resources: { type: 'array', items: { type: 'string' } },
     error: { type: 'string' },
   },
 } as const
@@ -96,11 +105,17 @@ function ensureConfigured(config: AgentAudioToolConfig): void {
   if (!usable) throw new AudioGenError('Audio API credentials are not configured. Open Settings > Plugins > AI Audio, add a channel and fill its API URL and API key.', 'audio-api-not-configured')
 }
 
+/** Library type from the generation mode, with an explicit override. */
+function libraryTypeOf(mode: AudioMode, override: unknown): LibraryType {
+  if (override === 'voice' || override === 'music' || override === 'sfx' || override === 'tts') return override
+  if (mode === 'voice_design') return 'voice'
+  return mode
+}
+
 /** Register the Agent audio tool. */
 export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioToolConfig): () => void {
   const disposer = ctx.tools.register(defineTool({
-    name: 'generate_audio',
-    description: 'Generate audio with the configured audio provider. Supports text-to-speech, music generation, sound effects and voice design (MiniMax /v1/voice_design, ElevenLabs /v1/text-to-voice/design). The tool call waits for the upstream result and returns same-origin audio URLs; pass those URLs to the user for playback or download. If multiple models are configured, first ask the user which one to use or pass model explicitly.',
+    name: 'generate_audio',    description: 'Generate audio with the configured audio provider. Supports text-to-speech, music generation, sound effects and voice design (MiniMax /v1/voice_design, ElevenLabs /v1/text-to-voice/design). The tool call waits for the upstream result and returns same-origin audio URLs; pass those URLs to the user for playback or download. If multiple models are configured, first ask the user which one to use or pass model explicitly.',
     parameters: {
       prompt: { type: 'string', required: true, description: 'For tts, the text to speak. For music/sfx, a descriptive prompt.' },
       mode: { type: 'string', enum: ['tts', 'music', 'sfx', 'voice_design'], description: 'Generation mode. Defaults to tts.' },
@@ -113,6 +128,9 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       is_instrumental: { type: 'boolean', description: 'Generate purely instrumental music without vocals/lyrics (MiniMax is_instrumental). When true, lyrics may be omitted.' },
       loop: { type: 'boolean', description: 'Create a seamlessly looping sound effect (ElevenLabs sound generation loop, only for eleven_text_to_sound_v2).' },
       prompt_influence: { type: 'number', description: 'Sound effect prompt influence 0-1 (ElevenLabs prompt_influence, default 0.3): higher follows the prompt more closely, lower is more variable.' },
+      seed: { type: 'integer', description: 'Stable Audio random seed 0-4294967294 (default 0 = random); same seed yields reproducible audio.' },
+      steps: { type: 'integer', description: 'Stable Audio sampling steps, model-dependent: stable-audio-2 30-100, stable-audio-2.5/3 4-8 (out-of-range auto-clamped).' },
+      cfg_scale: { type: 'number', description: 'Stable Audio prompt adherence 1-25 (stable-audio-2 default 7, 2.5/3 default 1); higher follows the prompt more strictly.' },
       format: { type: 'string', description: 'Output format such as mp3 or wav. MiniMax music supports mp3/wav/pcm.' },
       // ---- MiniMax TTS only (ignored by other providers) ----
       emotion: { type: 'string', description: 'MiniMax TTS emotion, e.g. happy/sad/angry/nervous/fearful/bored (voice_setting.emotion).' },
@@ -152,6 +170,11 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
         },
         description: 'MiniMax TTS dual-voice blend weights (timbre_weights).',
       },
+      // ---- resource library ----
+      save_to_library: { type: 'boolean', description: 'Save the generated audio into the local resource library after success. Also enabled globally by the "auto save to library" setting; pass false to skip a single run.' },
+      library_name: { type: 'string', description: 'Resource name in the library. Defaults to the prompt.' },
+      library_type: { type: 'string', enum: ['voice', 'music', 'sfx', 'tts'], description: 'Resource type in the library. Defaults to the generation mode (voice_design → voice).' },
+      library_tags: { type: 'array', items: { type: 'string' }, description: 'Tags for the library resource.' },
     },
     output: {
       schema: resultSchema,
@@ -203,6 +226,9 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
         ...(typeof args.is_instrumental === 'boolean' ? { isInstrumental: args.is_instrumental } : {}),
         ...(typeof args.loop === 'boolean' ? { loop: args.loop } : {}),
         ...(typeof args.prompt_influence === 'number' && Number.isFinite(args.prompt_influence) ? { promptInfluence: args.prompt_influence } : {}),
+        ...(typeof args.seed === 'number' && Number.isFinite(args.seed) ? { seed: args.seed } : {}),
+        ...(typeof args.steps === 'number' && Number.isFinite(args.steps) ? { steps: args.steps } : {}),
+        ...(typeof args.cfg_scale === 'number' && Number.isFinite(args.cfg_scale) ? { cfgScale: args.cfg_scale } : {}),
         ...(typeof args.format === 'string' && args.format.trim() !== '' ? { format: args.format.trim() } : {}),
         // ---- MiniMax TTS 专属字段 ----
         ...(typeof args.emotion === 'string' && args.emotion.trim() !== '' ? { emotion: args.emotion.trim() } : {}),
@@ -226,13 +252,22 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       try {
         const outputs = await generateAudio(picked.channel, request, exec.signal)
         const audio: AgentAudioRef[] = []
+        const saved: SavedAudioRef[] = []
         for (const [index, output] of outputs.entries()) {
-          const saved = await saveAudioFile(output.data, output.mime, `generated-${index + 1}`)
+          const stored = await saveAudioFile(output.data, output.mime, `generated-${index + 1}`)
+          saved.push({
+            id: stored.id,
+            url: `/api/dsh-audiogen/audio/${encodeURIComponent(stored.file)}`,
+            file: stored.file,
+            mime: stored.mime,
+            bytes: stored.bytes,
+            ...(output.voiceId === undefined ? {} : { voiceId: output.voiceId }),
+          })
           audio.push({
-            id: saved.id,
-            url: `/api/dsh-audiogen/audio/${encodeURIComponent(saved.file)}`,
-            mime: saved.mime,
-            bytes: saved.bytes,
+            id: stored.id,
+            url: `/api/dsh-audiogen/audio/${encodeURIComponent(stored.file)}`,
+            mime: stored.mime,
+            bytes: stored.bytes,
             ...(output.voiceId === undefined ? {} : { voiceId: output.voiceId }),
           })
         }
@@ -248,18 +283,52 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
             ...(request.duration === undefined ? {} : { duration: request.duration }),
             ...(request.format === undefined ? {} : { format: request.format }),
             audio: outputs.map((output, index) => ({
-              id: audio[index]!.id,
+              id: saved[index]!.id,
+              file: saved[index]!.file,
               b64: Buffer.from(output.data).toString('base64'),
-              mime: audio[index]!.mime,
-              bytes: audio[index]!.bytes,
-              url: audio[index]!.url,
+              mime: saved[index]!.mime,
+              bytes: saved[index]!.bytes,
+              url: saved[index]!.url,
               ...(output.voiceId === undefined ? {} : { voiceId: output.voiceId }),
             })),
             channelId: picked.channel.id,
             channel: picked.channel.name,
+            params: { ...request },
           })
         } catch {
           // History is best-effort and must not fail the agent tool.
+        }
+        // ---- 资源库保存：显式参数优先；设置自动入库时可用 false 跳过 ----
+        const wantSave = args.save_to_library === true || (config.autoSaveToLibrary && args.save_to_library !== false)
+        let resources: string[] | undefined
+        if (wantSave) {
+          try {
+            const entry = await saveToLibrary({
+              audioFiles: saved.map(item => ({
+                id: item.id,
+                file: item.file,
+                mime: item.mime,
+                ...(item.voiceId === undefined ? {} : { voiceId: item.voiceId }),
+              })),
+              type: libraryTypeOf(request.mode, args.library_type),
+              ...(typeof args.library_name === 'string' && args.library_name.trim() !== '' ? { name: args.library_name.trim() } : {}),
+              ...(Array.isArray(args.library_tags) ? { tags: args.library_tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim() !== '').map(tag => tag.trim()) } : {}),
+              provenance: {
+                mode: request.mode,
+                prompt: request.prompt,
+                channel: picked.channel.name,
+                channelId: picked.channel.id,
+                apiUrl: picked.channel.apiUrl,
+                model: picked.alias,
+                upstream: picked.upstream,
+                ...(request.voice === undefined ? {} : { voice: request.voice }),
+                params: { ...request },
+              },
+            })
+            resources = [entry.id]
+          } catch {
+            // library-save is best-effort; generation already succeeded.
+          }
         }
         return {
           status: 'completed',
@@ -267,6 +336,7 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
           mode: request.mode,
           model: picked.alias,
           audio,
+          ...(resources === undefined ? {} : { resources }),
         }
       } catch (error) {
         if (exec.signal?.aborted === true) throw error
@@ -281,5 +351,76 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       }
     },
   }))
-  return disposer
+
+  const searchDisposer = ctx.tools.register(defineTool({
+    name: 'search_audio_library',
+    description: 'Search curated audio resources in the local resource library (voice / music / sfx / tts). Returns matching resources with type, category, name, tags, full provenance (channel, model, voiceId, prompt) and same-origin audio URLs the user can play. Use it before generating to reuse an existing voice, music bed or sound effect instead of generating a new one.',
+    parameters: {
+      type: { type: 'string', enum: ['voice', 'music', 'sfx', 'tts'], description: 'Filter by resource type.' },
+      category: { type: 'string', description: 'Filter by category (voice: male/female/custom; tts: the speaking voice key).' },
+      keyword: { type: 'string', description: 'Search name, tags, prompt and model.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          status: { type: 'string', required: true, enum: ['ok'] },
+          count: { type: 'integer', required: true },
+          entries: {
+            type: 'array', required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                id: { type: 'string', required: true },
+                name: { type: 'string', required: true },
+                type: { type: 'string', required: true, enum: ['voice', 'music', 'sfx', 'tts'] },
+                category: { type: 'string' },
+                tags: { type: 'array', items: { type: 'string' }, required: true },
+                prompt: { type: 'string', required: true },
+                model: { type: 'string' },
+                channel: { type: 'string' },
+                voiceId: { type: 'string' },
+                urls: { type: 'array', items: { type: 'string' }, required: true },
+              },
+            },
+          },
+        },
+      } as const,
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+    },
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      const keyword = typeof args.keyword === 'string' ? args.keyword.trim().toLowerCase() : ''
+      const wantedType = args.type === 'voice' || args.type === 'music' || args.type === 'sfx' || args.type === 'tts' ? args.type : undefined
+      const wantedCategory = typeof args.category === 'string' && args.category.trim() !== '' ? args.category.trim() : undefined
+      const all = await listLibrary()
+      const entries = all.filter(entry => {
+        if (wantedType !== undefined && entry.type !== wantedType) return false
+        if (wantedCategory !== undefined && (entry.category ?? '') !== wantedCategory) return false
+        if (keyword !== '') {
+          const haystack = [entry.name, ...entry.tags, entry.provenance.prompt, entry.provenance.model ?? '', entry.provenance.channel ?? ''].join(' ').toLowerCase()
+          if (!haystack.includes(keyword)) return false
+        }
+        return true
+      }).slice(0, 30).map(entry => ({
+        id: entry.id,
+        name: entry.name,
+        type: entry.type,
+        ...(entry.category === undefined ? {} : { category: entry.category }),
+        tags: entry.tags,
+        prompt: entry.provenance.prompt,
+        ...(entry.provenance.model === undefined ? {} : { model: entry.provenance.model }),
+        ...(entry.provenance.channel === undefined ? {} : { channel: entry.provenance.channel }),
+        ...(entry.provenance.voiceId === undefined ? {} : { voiceId: entry.provenance.voiceId }),
+        urls: entry.files.map(file => file.url),
+      }))
+      return { status: 'ok' as const, count: entries.length, entries }
+    },
+  }))
+  return () => {
+    disposer()
+    searchDisposer()
+  }
 }

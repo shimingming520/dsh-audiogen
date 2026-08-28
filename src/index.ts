@@ -36,6 +36,7 @@ export interface Config {
   channelSecrets?: Record<string, string>
   defaultChannelId?: string
   defaultModel?: string
+  autoSaveToLibrary?: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -55,6 +56,7 @@ export const Config: z<Config> = z.object({
   channelSecrets: z.dict(z.string().role('secret')).default({}),
   defaultChannelId: z.string().default(''),
   defaultModel: z.string().default(''),
+  autoSaveToLibrary: z.boolean().default(false),
 })
 
 const DEFAULT_ENABLED = true
@@ -116,6 +118,7 @@ export interface EffectiveConfig {
   channels: AudioChannel[]
   defaultChannelId: string
   defaultModel: string
+  autoSaveToLibrary: boolean
 }
 
 export function apply(ctx: Context, config?: Config): void {
@@ -142,6 +145,7 @@ export function apply(ctx: Context, config?: Config): void {
       })),
       defaultChannelId,
       defaultModel: typeof value.defaultModel === 'string' ? value.defaultModel.trim() : '',
+      autoSaveToLibrary: value.autoSaveToLibrary === true,
     }
   }
 
@@ -156,6 +160,7 @@ export function apply(ctx: Context, config?: Config): void {
       const routes = makeRoutes({
         settings: seam,
         resolveChannels: channelsView,
+        autoSave: () => resolve().autoSaveToLibrary,
       })
       const disposers = routes.map(route => ctx.webServer.register(route))
       return () => { for (const dispose of disposers) dispose() }
@@ -170,6 +175,7 @@ export function apply(ctx: Context, config?: Config): void {
         allowAgentAudioGeneration: value.allowAgentAudioGeneration,
         channels: value.channels,
         defaultChannelId: value.defaultChannelId,
+        autoSaveToLibrary: value.autoSaveToLibrary,
       }
     }), 'dsh-audiogen: agent audio tools')
   })

@@ -8,7 +8,7 @@
 export const AUDIOGEN_SETTINGS_NAMESPACE = 'dsh-audiogen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '0.3.5'
+export const PLUGIN_VERSION = '0.4.0'
 
 /** Same-origin route family (loopback-only, mirroring dsh-imagegen). */
 export const SETTINGS_API = {
@@ -41,11 +41,29 @@ export const HISTORY_API = {
   audio: '/api/dsh-audiogen/history/audio',
 } as const
 
+/** Host-persisted resource-library routes. */
+export const LIBRARY_API = {
+  list: '/api/dsh-audiogen/library/list',
+  save: '/api/dsh-audiogen/library/save',
+  update: '/api/dsh-audiogen/library/update',
+  remove: '/api/dsh-audiogen/library/remove',
+  audio: '/api/dsh-audiogen/library/audio',
+} as const
+
 /** Maximum number of history entries retained host-side (oldest evicted). */
 export const HISTORY_MAX = 50
 
 /** Audio generation modes. */
 export type AudioMode = 'tts' | 'music' | 'sfx' | 'voice_design'
+
+/** Resource-library entry kinds (map to directories under library/). */
+export type LibraryType = 'voice' | 'music' | 'sfx' | 'tts'
+
+/** Voice resources: gender bucket (male / female / custom). */
+export type VoiceCategory = 'male' | 'female' | 'custom'
+
+/** All library types, for iteration and validation. */
+export const LIBRARY_TYPES: readonly LibraryType[] = ['voice', 'music', 'sfx', 'tts'] as const
 
 /** The capability category of an audio model/voice. */
 export type AudioModelCategory =
@@ -122,6 +140,12 @@ export interface GenerateAudioRequest {
   loop?: boolean
   /** ElevenLabs 音效：提示词影响度 0-1（prompt_influence，默认 0.3）。 */
   promptInfluence?: number
+  /** Stable Audio 随机种子（seed，0-4294967294，默认 0=随机）。 */
+  seed?: number
+  /** Stable Audio 采样步数（steps，按模型收敛：stable-audio-2: 30-100；2.5/3: 4-8）。 */
+  steps?: number
+  /** Stable Audio 提示词遵循度（cfg_scale 1-25；stable-audio-2 默认 7，2.5/3 默认 1）。 */
+  cfgScale?: number
   /** Output format, e.g. mp3, wav, pcm. */
   format?: string
   /** Channel this request targets (host falls back to default). */
@@ -162,6 +186,8 @@ export interface GenerateAudioRequest {
   voiceModify?: { pitch?: number; intensity?: number; timbre?: number; soundEffects?: string }
   /** MiniMax 双音色混合权重（timbre_weights）。 */
   timbreWeights?: Array<{ voiceId: string; weight: number }>
+  /** 生成完成后自动保存到资源库（面板勾选；宿主还会并入 autoSaveToLibrary 设置）。 */
+  saveToLibrary?: boolean
 }
 
 /** One generated audio, normalized host-side to base64. */
@@ -178,6 +204,8 @@ export interface GeneratedAudio {
   url: string
   /** Stable audio id / file name. */
   id: string
+  /** File name inside the audio/ store dir. */
+  file: string
   /** Optional voice id returned by a voice-design API. */
   voiceId?: string
 }
@@ -218,6 +246,8 @@ export interface HistoryEntry {
   audio: HistoryAudioRef[]
   channelId?: string
   channel?: string
+  /** Full resolved generation-request snapshot (provenance; no secrets). */
+  params?: Record<string, unknown>
 }
 
 /** A history entry the client submits for persistence (audio still carries base64). */
@@ -235,7 +265,100 @@ export interface HistoryEntryInput {
   audio: GeneratedAudio[]
   channelId?: string
   channel?: string
+  /** Full resolved generation-request snapshot (provenance; no secrets). */
+  params?: Record<string, unknown>
 }
+
+// --------------------------------------------------------------- resource library
+
+/** File name / id pair the client hands the host so it can copy a stored audio file. */
+export interface LibraryAudioInput {
+  /** Audio id (UUID) as stored in the audio/ dir. */
+  id: string
+  /** File name inside the audio/ dir (e.g. <uuid>.mp3). */
+  file: string
+  /** MIME type. */
+  mime: string
+  /** Optional generated voice id (voice_design outputs). */
+  voiceId?: string
+  /** Optional duration in seconds. */
+  duration?: number
+}
+
+/** Full provenance of one library resource. */
+export interface LibraryProvenance {
+  mode: AudioMode
+  prompt: string
+  /** Channel display name snapshot. */
+  channel?: string
+  channelId?: string
+  /** Provider API base URL (non-secret). */
+  apiUrl?: string
+  /** Model/voice alias as configured. */
+  model?: string
+  /** Upstream model/voice id actually sent to the provider. */
+  upstream?: string
+  /** Voice alias used for TTS. */
+  voice?: string
+  /** voiceId returned by the provider (voice_design). */
+  voiceId?: string
+  /** Full resolved generation-request snapshot (no secrets). */
+  params?: Record<string, unknown>
+}
+
+/** One audio file inside a library entry. */
+export interface LibraryFileRef {
+  /** Same-origin URL (LIBRARY_API.audio/<rel>). */
+  url: string
+  /** Relative path under library/ (e.g. voice/male/<id>.mp3). */
+  rel: string
+  /** MIME type. */
+  mime: string
+  /** Exact encoded byte length. */
+  bytes: number
+  /** Duration in seconds when known. */
+  duration?: number
+  /** Optional generated voice id (voice_design outputs). */
+  voiceId?: string
+}
+
+/** One curated resource in the library. */
+export interface LibraryEntry {
+  id: string
+  createdAt: number
+  type: LibraryType
+  /** voice: male/female/custom; tts: the speaking voice key; others: ''. */
+  category?: string
+  name: string
+  tags: string[]
+  note?: string
+  files: LibraryFileRef[]
+  provenance: LibraryProvenance
+}
+
+/** Client → host save request (audioFiles reference files in the audio/ dir). */
+export interface LibrarySaveRequest {
+  audioFiles: LibraryAudioInput[]
+  type: LibraryType
+  category?: string
+  name?: string
+  tags?: string[]
+  note?: string
+  provenance: LibraryProvenance
+}
+
+/** Client → host update request (moving type/category relocates files). */
+export interface LibraryUpdateRequest {
+  id: string
+  name?: string
+  tags?: string[]
+  note?: string
+  category?: string
+  type?: LibraryType
+}
+
+/** Default name length when no name was given. */
+export const LIBRARY_NAME_MAX = 40
 
 /** The plugin settings fields edited by the settings card and panel. */
 export interface AudiogenConfig {
@@ -247,4 +370,6 @@ export interface AudiogenConfig {
   defaultChannelId?: string
   /** Optional default voice/model alias for quick generation. */
   defaultModel?: string
+  /** 生成完成后自动加入资源库（面板与 Agent 生成均生效；单次可取消勾选）。 */
+  autoSaveToLibrary?: boolean
 }
