@@ -1,0 +1,16 @@
+node_modules/
+*.tsbuildinfo
+
+# Build artifacts
+*.tgz
+*.zip
+
+# npm local cache (used by npm-cli on this machine)
+.npm-cache/
+
+# Temp files
+.tmp-*
+
+# OS files
+.DS_Store
+Thumbs.db

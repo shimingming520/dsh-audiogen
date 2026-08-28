@@ -1,0 +1,377 @@
+/**
+ * Upstream audio proxy engine.
+ *
+ * Normalizes a provider response into base64 audio payloads so the browser
+ * never needs to talk to the upstream directly. Supports a small set of
+ * built-in vendor presets plus a best-effort OpenAI-compatible / generic path.
+ */
+
+import type { AudioMode, GenerateAudioRequest, GeneratedAudio } from './protocol.ts'
+
+/** Resolved channel (key included; never logged). */
+export interface AudioChannel {
+  id: string
+  preset: string
+  name: string
+  apiUrl: string
+  apiKey: string
+  models: Array<{ alias: string; id: string }>
+}
+
+/** An audio generation failure with a user-presentable message. */
+export class AudioGenError extends Error {
+  readonly code: string
+
+  constructor(message: string, code = 'audio-generate-failed') {
+    super(message)
+    this.name = 'AudioGenError'
+    this.code = code
+  }
+}
+
+/** Total budget for one upstream generation call. Audio models can be slow. */
+const UPSTREAM_TIMEOUT_MS = 240_000
+/** Budget for downloading one result audio URL. */
+const AUDIO_FETCH_TIMEOUT_MS = 60_000
+
+function requestSignal(source: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; dispose: () => void } {
+  const controller = new AbortController()
+  const abortFromSource = () => { controller.abort(source?.reason) }
+  if (source?.aborted === true) abortFromSource()
+  else source?.addEventListener('abort', abortFromSource, { once: true })
+  const timeout = setTimeout(() => { controller.abort(new DOMException('The operation timed out.', 'TimeoutError')) }, timeoutMs)
+  timeout.unref?.()
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeout)
+      source?.removeEventListener('abort', abortFromSource)
+    },
+  }
+}
+
+/** Detect a few common audio container formats from magic bytes. */
+export function detectAudioMime(data: Uint8Array): string | undefined {
+  if (data.length >= 4 && data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46) return 'audio/wav'
+  if (data.length >= 3 && data[0] === 0x49 && data[1] === 0x44 && data[2] === 0x33) return 'audio/mpeg'
+  if (data.length >= 4 && data[0] === 0x66 && data[1] === 0x4c && data[2] === 0x61 && data[3] === 0x43) return 'audio/flac'
+  if (data.length >= 4 && data[0] === 0x4f && data[1] === 0x67 && data[2] === 0x67 && data[3] === 0x53) return 'audio/ogg'
+  if (data.length >= 4 && data[0] === 0x00 && data[1] === 0x00 && data[2] === 0x00 && data[3] === 0x18) return 'audio/mp4'
+  if (data.length >= 4 && data[0] === 0x23 && data[1] === 0x21 && data[2] === 0x41 && data[3] === 0x4d) return 'audio/aiff'
+  return undefined
+}
+
+function mimeFromContentType(value: string | null): string | undefined {
+  if (value === null || value === '') return undefined
+  return value.split(';')[0]!.trim().toLowerCase()
+}
+
+function audioMime(data: Uint8Array, contentType: string | null): string {
+  return detectAudioMime(data) ?? mimeFromContentType(contentType) ?? 'audio/mpeg'
+}
+
+function isPreset(channel: AudioChannel, id: string): boolean {
+  return channel.preset === id || channel.apiUrl.toLowerCase().includes(id)
+}
+
+function isOpenAICompatible(channel: AudioChannel, mode: AudioMode): boolean {
+  return isPreset(channel, 'openai')
+    || /(^|\/)(v\d+\/)?audio\/speech$/i.test(channel.apiUrl.trim())
+    || (channel.preset === 'custom' && mode === 'tts')
+}
+
+function isElevenLabs(channel: AudioChannel): boolean {
+  return isPreset(channel, 'elevenlabs') || /elevenlabs/i.test(channel.apiUrl)
+}
+
+function isMiniMax(channel: AudioChannel): boolean {
+  return isPreset(channel, 'minimax') || /minimax/i.test(channel.apiUrl)
+}
+
+function isStability(channel: AudioChannel): boolean {
+  return isPreset(channel, 'stability') || /stability\.ai/i.test(channel.apiUrl)
+}
+
+function endpointBase(url: string): string {
+  return url.trim().replace(/\/+$/, '')
+}
+
+function bytesToBase64(data: Uint8Array): string {
+  return Buffer.from(data).toString('base64')
+}
+
+/** Parse a base64 payload that may carry a data: prefix. */
+function bareBase64(value: string): string {
+  const match = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(value.trim())
+  if (match !== null && match[3] !== undefined) return match[3]
+  return value
+}
+
+function asBase64(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim() !== '') return bareBase64(value)
+  return undefined
+}
+
+/** Recursively look for the first likely base64 audio string in a JSON payload. */
+function findBase64Audio(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.length > 100 && !/^https?:\/\//i.test(value.trim())) return value
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findBase64Audio(item)
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  if (value === null || typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  for (const key of ['audio', 'b64_json', 'base64', 'data', 'output', 'result', 'value']) {
+    const candidate = record[key]
+    const found = findBase64Audio(candidate)
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
+/** Find the first provider-returned audio URL in a JSON payload. */
+function findAudioUrl(value: unknown): string | undefined {
+  if (typeof value === 'string' && /^https?:\/\//i.test(value)) return value
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findAudioUrl(item)
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  if (value === null || typeof value !== 'object') return undefined
+  const record = value as Record<string, unknown>
+  for (const key of ['url', 'audio_url', 'href', 'link']) {
+    const candidate = record[key]
+    const found = findAudioUrl(candidate)
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const budget = requestSignal(init.signal as AbortSignal | undefined, timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: budget.signal })
+  } finally {
+    budget.dispose()
+  }
+}
+
+async function normalizeAudioResponse(
+  response: Response,
+  options: { apiKey: string; fallbackMime?: string },
+): Promise<Array<{ data: Uint8Array; mime: string }>> {
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const text = await response.text()
+      detail = text.slice(0, 500)
+    } catch {
+      // keep empty
+    }
+    throw new AudioGenError(`audio API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail}`}`, 'audio-api-error')
+  }
+
+  const contentType = mimeFromContentType(response.headers.get('content-type')) ?? options.fallbackMime
+  const buffer = new Uint8Array(await response.arrayBuffer())
+  // Some providers return binary audio directly, others JSON with base64/url.
+  const text = new TextDecoder().decode(buffer).trim()
+  if (text.startsWith('{') || text.startsWith('[')) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      throw new AudioGenError('audio endpoint returned an unprocessable response body', 'audio-bad-response')
+    }
+    const base64 = findBase64Audio(parsed)
+    if (base64 !== undefined && base64.length > 0) {
+      let data: Uint8Array
+      try {
+        data = new Uint8Array(Buffer.from(base64, 'base64'))
+      } catch {
+        throw new AudioGenError('audio endpoint returned invalid base64', 'audio-bad-response')
+      }
+      return [{ data, mime: detectAudioMime(data) ?? contentType ?? 'audio/mpeg' }]
+    }
+    const url = findAudioUrl(parsed)
+    if (url !== undefined) {
+      const fetched = await fetchWithTimeout(url, {
+        headers: options.apiKey === '' ? {} : { authorization: `Bearer ${options.apiKey}` },
+        redirect: 'follow',
+      }, AUDIO_FETCH_TIMEOUT_MS)
+      if (!fetched.ok) throw new AudioGenError(`failed to fetch generated audio url: HTTP ${fetched.status}`, 'audio-url-fetch-failed')
+      const data = new Uint8Array(await fetched.arrayBuffer())
+      return [{ data, mime: audioMime(data, fetched.headers.get('content-type')) }]
+    }
+    throw new AudioGenError('audio endpoint returned neither binary nor base64/url audio', 'audio-empty-result')
+  }
+  return [{ data: buffer, mime: audioMime(buffer, response.headers.get('content-type') ?? contentType ?? null) }]
+}
+
+async function openAITTS(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string }>> {
+  const base = endpointBase(channel.apiUrl)
+  const endpoint = /\/audio\/speech(\?|$)/i.test(base) ? base : `${base}/audio/speech`
+  const model = (request.upstream ?? request.model) || 'tts-1'
+  const voice = request.voice ?? 'alloy'
+  const body: Record<string, unknown> = {
+    model,
+    input: request.prompt,
+    voice,
+    response_format: request.format ?? 'mp3',
+    ...(request.speed !== undefined ? { speed: request.speed } : {}),
+  }
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    redirect: 'error',
+    headers: {
+      authorization: `Bearer ${channel.apiKey.trim()}`,
+      'content-type': 'application/json',
+      accept: 'audio/mpeg, application/json',
+    },
+    body: JSON.stringify(body),
+    signal,
+  }, UPSTREAM_TIMEOUT_MS)
+  return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+}
+
+async function elevenLabs(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string }>> {
+  const base = endpointBase(channel.apiUrl)
+  const model = (request.upstream ?? request.model) || 'eleven_multilingual_v2'
+  const voiceId = (request.voice ?? request.model ?? model).trim()
+  const endpoint = `${base}/text-to-speech/${encodeURIComponent(voiceId)}`
+  const body: Record<string, unknown> = {
+    text: request.prompt,
+    model_id: model,
+    voice_settings: {
+      stability: 0.5,
+      similarity_boost: 0.75,
+      style: 0.0,
+      use_speaker_boost: true,
+      ...(request.speed !== undefined ? { speed: request.speed } : {}),
+    },
+  }
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    redirect: 'error',
+    headers: {
+      'xi-api-key': channel.apiKey.trim(),
+      'content-type': 'application/json',
+      accept: 'audio/mpeg, application/json',
+    },
+    body: JSON.stringify(body),
+    signal,
+  }, UPSTREAM_TIMEOUT_MS)
+  return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+}
+
+async function minimax(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string }>> {
+  const base = endpointBase(channel.apiUrl)
+  const endpoint = /\/t2a_v2(\?|$)/i.test(base) ? base : `${base}/t2a_v2`
+  const model = (request.upstream ?? request.model) || 'speech-01-turbo'
+  const voice = request.voice ?? request.model ?? ''
+  const body: Record<string, unknown> = {
+    model,
+    text: request.prompt,
+    stream: false,
+    ...(voice === '' ? {} : { voice_setting: {
+      voice_id: voice,
+      ...(request.speed !== undefined ? { speed: request.speed } : {}),
+      vol: 1,
+      pitch: 0,
+    } }),
+    audio_setting: {
+      format: request.format ?? 'mp3',
+      sample_rate: 32000,
+      bitrate: 128000,
+    },
+  }
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    redirect: 'error',
+    headers: {
+      authorization: `Bearer ${channel.apiKey.trim()}`,
+      'content-type': 'application/json',
+      accept: 'application/json, audio/mpeg',
+    },
+    body: JSON.stringify(body),
+    signal,
+  }, UPSTREAM_TIMEOUT_MS)
+  return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+}
+
+async function stabilityAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string }>> {
+  const base = endpointBase(channel.apiUrl)
+  const endpoint = /\/generation(\?|$)/i.test(base) ? base : `${base}/generation`
+  const model = (request.upstream ?? request.model) || 'stable-audio-2.0'
+  const body: Record<string, unknown> = {
+    model,
+    prompt: request.prompt,
+    ...(request.duration !== undefined ? { duration: request.duration } : {}),
+    ...(request.format !== undefined ? { output_format: request.format } : {}),
+  }
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    redirect: 'error',
+    headers: {
+      authorization: `Bearer ${channel.apiKey.trim()}`,
+      'content-type': 'application/json',
+      accept: 'application/json, audio/mpeg, audio/wav',
+    },
+    body: JSON.stringify(body),
+    signal,
+  }, UPSTREAM_TIMEOUT_MS)
+  return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+}
+
+async function genericAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string }>> {
+  const base = endpointBase(channel.apiUrl)
+  if (request.mode === 'tts' && !/\/generate(\?|$)/i.test(base)) {
+    return openAITTS(channel, request, signal)
+  }
+  const endpoint = /\/generate(\?|$)/i.test(base) ? base : `${base}/generate`
+  const model = (request.upstream ?? request.model) || 'default'
+  const body: Record<string, unknown> = {
+    model,
+    prompt: request.prompt,
+    mode: request.mode,
+    ...(request.voice !== undefined ? { voice: request.voice } : {}),
+    ...(request.duration !== undefined ? { duration: request.duration } : {}),
+    ...(request.format !== undefined ? { output_format: request.format } : {}),
+  }
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    redirect: 'error',
+    headers: {
+      authorization: `Bearer ${channel.apiKey.trim()}`,
+      'content-type': 'application/json',
+      accept: 'application/json, audio/mpeg, audio/wav',
+    },
+    body: JSON.stringify(body),
+    signal,
+  }, UPSTREAM_TIMEOUT_MS)
+  return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+}
+
+/**
+ * Generate one or more audio outputs from a configured channel.
+ * @returns normalized generated audio (base64, mime, bytes).
+ */
+export async function generateAudio(
+  channel: AudioChannel,
+  request: GenerateAudioRequest,
+  signal?: AbortSignal,
+): Promise<Array<{ data: Uint8Array; mime: string }>> {
+  if (channel.apiUrl.trim() === '') throw new AudioGenError('channel API URL is not configured', 'audio-no-endpoint')
+  if (channel.apiKey.trim() === '') throw new AudioGenError('channel API key is not configured', 'audio-no-key')
+  if (request.prompt.trim() === '') throw new AudioGenError('audio prompt/text is required', 'audio-empty-prompt')
+
+  if (isElevenLabs(channel)) return elevenLabs(channel, request, signal)
+  if (isMiniMax(channel)) return minimax(channel, request, signal)
+  if (isStability(channel)) return stabilityAudio(channel, request, signal)
+  if (isOpenAICompatible(channel, request.mode)) return openAITTS(channel, request, signal)
+  return genericAudio(channel, request, signal)
+}
