@@ -4,7 +4,7 @@
  */
 
 import {
-  GENERATE_API, HISTORY_API, LIBRARY_API,
+  GENERATE_API, HISTORY_API, LIBRARY_API, TASK_API,
   type GenerateAudioRequest, type GeneratedAudio, type HistoryEntry,
   type LibraryEntry, type LibrarySaveRequest, type LibraryUpdateRequest,
 } from '../protocol.ts'
@@ -20,59 +20,58 @@ export interface GenerateResponse {
   message?: string
 }
 
+/** POST helper: the host API requires the JSON content type on every POST. */
+function postJson(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
+  return fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    ...(signal === undefined ? {} : { signal }),
+  })
+}
+
 export class AudiogenApi {
-  async generate(request: GenerateAudioRequest): Promise<GenerateResponse> {
-    const response = await fetch(GENERATE_API, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(request),
-    })
+  async generate(request: GenerateAudioRequest, signal?: AbortSignal): Promise<GenerateResponse> {
+    const response = await postJson(GENERATE_API, { ...request, taskId: request.taskId }, signal)
     const body = await response.json() as GenerateResponse
     return body
   }
 
+  /** 取消进行中的任务：宿主侧中断全部在途上游调用，剩余模型跳过。 */
+  async cancelTask(taskId: string): Promise<void> {
+    await postJson(TASK_API.cancel, { taskId }).catch(() => { /* best-effort */ })
+  }
+
   async history(): Promise<HistoryEntry[]> {
-    const response = await fetch(HISTORY_API.list, { method: 'POST' })
+    const response = await postJson(HISTORY_API.list, {})
     const body = await response.json() as { ok?: boolean; history?: HistoryEntry[] }
     return body.ok === true ? (body.history ?? []) : []
   }
 
   async clearHistory(): Promise<void> {
-    await fetch(HISTORY_API.clear, { method: 'POST' })
+    await postJson(HISTORY_API.clear, {})
   }
 
   async libraryList(): Promise<LibraryEntry[]> {
-    const response = await fetch(LIBRARY_API.list, { method: 'POST' })
+    const response = await postJson(LIBRARY_API.list, {})
     const body = await response.json() as { ok?: boolean; entries?: LibraryEntry[] }
     return body.ok === true ? (body.entries ?? []) : []
   }
 
   async librarySave(request: LibrarySaveRequest): Promise<{ ok: boolean; entry?: LibraryEntry; message?: string }> {
-    const response = await fetch(LIBRARY_API.save, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(request),
-    })
+    const response = await postJson(LIBRARY_API.save, request)
     const body = await response.json() as { ok?: boolean; entry?: LibraryEntry; message?: string }
     return { ok: body.ok === true, ...(body.entry === undefined ? {} : { entry: body.entry }), ...(body.message === undefined ? {} : { message: body.message }) }
   }
 
   async libraryUpdate(request: LibraryUpdateRequest): Promise<{ ok: boolean; entry?: LibraryEntry; message?: string }> {
-    const response = await fetch(LIBRARY_API.update, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(request),
-    })
+    const response = await postJson(LIBRARY_API.update, request)
     const body = await response.json() as { ok?: boolean; entry?: LibraryEntry; message?: string }
     return { ok: body.ok === true, ...(body.entry === undefined ? {} : { entry: body.entry }), ...(body.message === undefined ? {} : { message: body.message }) }
   }
 
   async libraryRemove(ids: string[]): Promise<{ ok: boolean }> {
-    const response = await fetch(LIBRARY_API.remove, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ids }),
-    })
+    const response = await postJson(LIBRARY_API.remove, { ids })
     const body = await response.json() as { ok?: boolean }
     return { ok: body.ok === true }
   }

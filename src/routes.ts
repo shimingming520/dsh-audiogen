@@ -11,16 +11,20 @@ import { randomUUID } from 'node:crypto'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { SettingsConflictError, settingsNamespace, type SettingsDescriptor } from '@deepseek-ai/dsh-settings'
 import { generateAudio, AudioGenError, type AudioChannel } from './audio-engine.ts'
+import type { GenerationBudget } from './audio-scheduler.ts'
 import { discoverAudioModels } from './audio-models.ts'
 import { AUDIO_PRESETS } from './audio-presets.ts'
 import { appendHistory, clearHistory, listHistory, readAudioFile, removeHistory, saveAudioFile, listLibrary, saveToLibrary, updateLibraryEntry, removeLibraryEntries, readLibraryFile } from './audio-store.ts'
 import {
-  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, GENERATE_API, HISTORY_API, LIBRARY_API, MODEL_API, PRESETS_API, SETTINGS_API,
+  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, GENERATE_API, HISTORY_API, LIBRARY_API, MODEL_API, PRESETS_API, SETTINGS_API, TASK_API,
   LIBRARY_TYPES,
   type GenerateAudioRequest, type GeneratedAudio, type HistoryEntryInput, type LibraryAudioInput, type LibraryProvenance, type LibraryType,
 } from './protocol.ts'
 
 const MAX_JSON_BODY_BYTES = 16 * 1024 * 1024
+
+/** 宿主侧任务取消注册表：taskId → 该任务当前在途请求的 AbortController 集合。 */
+const taskAborts = new Map<string, Set<AbortController>>()
 
 /** Settings seam face the bridge needs. */
 export interface SettingsSeam {
@@ -41,6 +45,8 @@ export interface AudiogenRoutesDeps {
   resolveChannels: () => ChannelsView
   /** Whether the auto-save-to-library setting is on. */
   autoSave: () => boolean
+  /** Global upstream concurrency gate (maxConcurrentGenerations). */
+  budget: GenerationBudget
 }
 
 function isLoopbackRequest(request: IncomingMessage): boolean {
@@ -416,8 +422,24 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
         }
         const request = resolved.request
         const channel = view.channels.find(candidate => candidate.id === request.channelId)!
+        // 任务取消支持：同一 taskId 可能对应多个并行子请求（对比任务），
+        // 宿主侧各自持有 AbortController，取消端点统一 abort。
+        const taskId = typeof body?.taskId === 'string' && body.taskId.trim() !== '' ? body.taskId.trim() : ''
+        const controller = new AbortController()
+        if (taskId !== '') {
+          const set = taskAborts.get(taskId) ?? new Set<AbortController>()
+          set.add(controller)
+          taskAborts.set(taskId, set)
+        }
         try {
-          const outputs = await generateAudio(channel, request)
+          // 全局并发闸门：与 Agent 工具共享「最大并发生成数」上限。
+          const release = await deps.budget.acquire(controller.signal)
+          let outputs
+          try {
+            outputs = await generateAudio(channel, request, controller.signal)
+          } finally {
+            release()
+          }
           const generated: GeneratedAudio[] = []
           for (const [index, output] of outputs.entries()) {
             const saved = await saveAudioFile(output.data, output.mime, `generated-${index + 1}`)
@@ -477,7 +499,33 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
         } catch (error) {
           const code = error instanceof AudioGenError ? error.code : 'generate-failed'
           writeJson(res, 200, { ok: false, code, message: messageOf(error) })
+        } finally {
+          if (taskId !== '') {
+            const set = taskAborts.get(taskId)
+            set?.delete(controller)
+            if (set !== undefined && set.size === 0) taskAborts.delete(taskId)
+          }
         }
+      },
+    },
+    // ---------------------------------------------------------- task cancel
+    {
+      kind: 'exact',
+      path: TASK_API.cancel,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const taskId = typeof body?.taskId === 'string' ? body.taskId.trim() : ''
+        if (taskId === '') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: 'taskId is required' })
+          return
+        }
+        const controllers = taskAborts.get(taskId)
+        if (controllers !== undefined) {
+          for (const controller of controllers) controller.abort()
+          taskAborts.delete(taskId)
+        }
+        writeJson(res, 200, { ok: true, aborted: controllers !== undefined ? controllers.size : 0 })
       },
     },
     // ----------------------------------------------------------- audio file

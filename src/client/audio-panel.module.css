@@ -425,6 +425,116 @@
   background: color-mix(in srgb, var(--dsw-alias-brand-primary, #2563eb) 8%, transparent);
 }
 
+/* ---------------------------------------------------------- model compare */
+
+.compareBox {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 11px;
+  border: 1px dashed var(--dsw-alias-brand-primary, #2563eb);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #2563eb) 4%, var(--dsw-alias-bg-layer-1, #fff));
+}
+
+.compareChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.compareChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 27px;
+  padding: 0 11px;
+  border: 1px solid var(--dsw-alias-border-l2, #d1d5db);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+
+.compareChip:hover {
+  color: var(--dsw-alias-label-primary, #1f2328);
+  border-color: var(--dsw-alias-label-dimmed, #9ca3af);
+}
+
+.compareChip[data-active='true'] {
+  color: var(--dsw-alias-brand-primary, #2563eb);
+  border-color: var(--dsw-alias-brand-primary, #2563eb);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #2563eb) 9%, transparent);
+  font-weight: 600;
+}
+
+.compareBoard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.compareGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid var(--dsw-alias-border-l1, #e5e7eb);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-2, #f7f7f8);
+}
+
+.compareGroup[data-state='running'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary, #2563eb) 45%, var(--dsw-alias-border-l1, #e5e7eb));
+}
+
+.compareGroup[data-state='done'] {
+  border-color: color-mix(in srgb, #10b981 45%, var(--dsw-alias-border-l1, #e5e7eb));
+}
+
+.compareGroup[data-state='error'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-label-error, #b91c1c) 45%, var(--dsw-alias-border-l1, #e5e7eb));
+}
+
+.compareGroupHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.compareModelName {
+  overflow: hidden;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  border: 1px solid var(--dsw-alias-border-l1, #e5e7eb);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compareState {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+  white-space: nowrap;
+}
+
+.compareGroup[data-state='running'] .compareState { color: var(--dsw-alias-brand-primary, #2563eb); }
+.compareGroup[data-state='done'] .compareState { color: #059669; }
+.compareGroup[data-state='error'] .compareState { color: var(--dsw-alias-label-error, #b91c1c); }
+
+.hint[data-error] {
+  color: var(--dsw-alias-label-error, #b91c1c);
+}
+
 /* --------------------------------------------------------------- history */
 
 .historyCol {
@@ -891,4 +1001,65 @@
   font-weight: 700;
   color: var(--dsw-alias-label-primary, #1f2328);
   white-space: normal;
+}
+
+/* 任务列表 */
+.taskList {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.taskCard {
+  border: 1px solid var(--dsw-alias-border-l2, #d1d5db);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--dsw-alias-bg-layer-2, #fafafa);
+}
+
+.taskCard[data-state='failed'] {
+  border-color: #dc2626;
+}
+
+.taskCard[data-state='cancelled'] {
+  opacity: 0.75;
+}
+
+.taskHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.taskLabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.taskStatus {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+}
+
+.taskStatus[data-state='done'] {
+  color: #16a34a;
+}
+
+.taskStatus[data-state='failed'] {
+  color: #dc2626;
+}
+
+.taskActions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
 }

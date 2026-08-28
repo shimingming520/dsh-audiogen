@@ -319,7 +319,12 @@ export function LibraryView(props: {
       </div>
 
       {loading ? <p className={css.stateNote}>加载中…</p> : null}
-      {error !== null ? <p className={css.stateNote} data-error>{error}</p> : null}
+      {error !== null ? (
+        <div className={css.stateNote} data-error>
+          <p>{error}</p>
+          <p>若提示 not found / 404：插件宿主尚未加载新代码，请重启 `dsh web` 后在浏览器强制刷新（Cmd+Shift+R）。</p>
+        </div>
+      ) : null}
       {!loading && error === null && filtered.length === 0 ? (
         <div className={css.empty}>
           <span className={css.emptyIcon}>🎧</span>

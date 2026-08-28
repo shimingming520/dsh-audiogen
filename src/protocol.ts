@@ -19,6 +19,11 @@ export const SETTINGS_API = {
 /** The audio-generation proxy route. */
 export const GENERATE_API = '/api/dsh-audiogen/generate' as const
 
+/** Loopback-only task cancellation route (aborts the host-side upstream call). */
+export const TASK_API = {
+  cancel: '/api/dsh-audiogen/task/cancel',
+} as const
+
 /** Host-mediated built-in provider catalog (channels the user can instantiate). */
 export const PRESETS_API = '/api/dsh-audiogen/presets' as const
 
@@ -154,6 +159,8 @@ export interface GenerateAudioRequest {
   channel?: string
   /** Upstream model id actually sent (host-filled from alias mapping). */
   upstream?: string
+  /** 客户端任务 id：宿主按 taskId 聚合 AbortController 支持真取消。 */
+  taskId?: string
 
   // ---- MiniMax TTS 专属字段（其他厂商渠道忽略）——————
   /** MiniMax 音色情绪，如 happy/sad/angry/nervous/fearful/bored；默认按音色自身。 */
@@ -372,4 +379,6 @@ export interface AudiogenConfig {
   defaultModel?: string
   /** 生成完成后自动加入资源库（面板与 Agent 生成均生效；单次可取消勾选）。 */
   autoSaveToLibrary?: boolean
+  /** 最大并发生成数（同时打到上游的请求数，含对比任务内多模型）。默认 5。 */
+  maxConcurrentGenerations?: number
 }

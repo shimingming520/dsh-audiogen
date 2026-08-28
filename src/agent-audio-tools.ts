@@ -9,6 +9,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { randomUUID } from 'node:crypto'
 import type { AudioChannel } from './audio-engine.ts'
 import { generateAudio, AudioGenError } from './audio-engine.ts'
+import type { GenerationBudget } from './audio-scheduler.ts'
 import { appendHistory, saveAudioFile, saveToLibrary, listLibrary } from './audio-store.ts'
 import type { AudioMode, GenerateAudioRequest, LibraryType } from './protocol.ts'
 
@@ -18,6 +19,8 @@ export interface AgentAudioToolConfig {
   channels: AudioChannel[]
   defaultChannelId: string
   autoSaveToLibrary: boolean
+  /** 全局并发闸门（与面板路由共享「最大并发生成数」）。 */
+  budget?: GenerationBudget
 }
 
 interface AgentAudioRef {
@@ -300,7 +303,14 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       const runOne = async (picked: { channel: AudioChannel; alias: string; upstream: string }): Promise<AgentAudioGroup> => {
         const request = buildRequest(picked)
         try {
-          const outputs = await generateAudio(picked.channel, request, exec.signal)
+          // 与面板路由共享全局并发闸门（限流时排队；取消时立即出队）。
+          const release = await (config.budget?.acquire(exec.signal) ?? Promise.resolve(() => { /* 默认不限制 */ }))
+          let outputs
+          try {
+            outputs = await generateAudio(picked.channel, request, exec.signal)
+          } finally {
+            release()
+          }
           const audio: AgentAudioRef[] = []
           const saved: SavedAudioRef[] = []
           for (const [index, output] of outputs.entries()) {

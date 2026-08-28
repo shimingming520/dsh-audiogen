@@ -17,6 +17,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 import { AUDIOGEN_SETTINGS_NAMESPACE, type ChannelConfig, type ModelMapping } from './protocol.ts'
+import { createGenerationBudget } from './audio-scheduler.ts'
 import { makeRoutes, type ChannelsView, type SettingsSeam } from './routes.ts'
 import type { AudioChannel } from './audio-engine.ts'
 import { registerAgentAudioTools, type AgentAudioToolConfig } from './agent-audio-tools.ts'
@@ -40,7 +41,10 @@ export interface Config {
   defaultChannelId?: string
   defaultModel?: string
   autoSaveToLibrary?: boolean
+  maxConcurrentGenerations?: number
 }
+
+const DEFAULT_MAX_CONCURRENT = 5
 
 export const Config: z<Config> = z.object({
   enabled: z.boolean().default(true),
@@ -60,6 +64,7 @@ export const Config: z<Config> = z.object({
   defaultChannelId: z.string().default(''),
   defaultModel: z.string().default(''),
   autoSaveToLibrary: z.boolean().default(false),
+  maxConcurrentGenerations: z.number().default(DEFAULT_MAX_CONCURRENT),
 })
 
 const DEFAULT_ENABLED = true
@@ -150,6 +155,7 @@ export interface EffectiveConfig {
   defaultChannelId: string
   defaultModel: string
   autoSaveToLibrary: boolean
+  maxConcurrentGenerations: number
 }
 
 export function apply(ctx: Context, config?: Config): void {
@@ -178,8 +184,14 @@ export function apply(ctx: Context, config?: Config): void {
       defaultChannelId,
       defaultModel: typeof value.defaultModel === 'string' ? value.defaultModel.trim() : '',
       autoSaveToLibrary: value.autoSaveToLibrary === true,
+      maxConcurrentGenerations: typeof value.maxConcurrentGenerations === 'number' && Number.isFinite(value.maxConcurrentGenerations)
+        ? Math.max(1, Math.min(20, Math.floor(value.maxConcurrentGenerations)))
+        : DEFAULT_MAX_CONCURRENT,
     }
   }
+
+  // 全局并发闸门：所有上游调用（面板路由 + Agent 工具）共享「最大并发生成数」。
+  const budget = createGenerationBudget(() => resolve().maxConcurrentGenerations)
 
   const channelsView = (): ChannelsView => {
     const value = resolve()
@@ -193,6 +205,7 @@ export function apply(ctx: Context, config?: Config): void {
         settings: seam,
         resolveChannels: channelsView,
         autoSave: () => resolve().autoSaveToLibrary,
+        budget,
       })
       const disposers = routes.map(route => ctx.webServer.register(route))
       return () => { for (const dispose of disposers) dispose() }
@@ -208,6 +221,7 @@ export function apply(ctx: Context, config?: Config): void {
         channels: value.channels,
         defaultChannelId: value.defaultChannelId,
         autoSaveToLibrary: value.autoSaveToLibrary,
+        budget,
       }
     }), 'dsh-audiogen: agent audio tools')
   })

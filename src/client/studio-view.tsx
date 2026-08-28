@@ -1,17 +1,19 @@
 /**
  * Studio view: the generation form (left), result cards (center) and the
  * compact generation history (right). Owns the «加入资源库» interactions —
- * a pre-generation checkbox, a per-card save dialog, and a history star.
+ * a pre-generation checkbox, a per-card save dialog, and a history star —
+ * plus a model-comparison mode that runs the same prompt across several
+ * models and shows one result group per model.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AudiogenApi } from './api.ts'
 import type { AudiogenConfig, AudiogenScope } from './settings-scope.ts'
 import { audioModelOptions } from './settings-scope.ts'
 import { tt } from './helpers.ts'
 import {
   HISTORY_API,
-  type AudioMode, type GenerateAudioRequest, type GeneratedAudio, type HistoryEntry, type LibraryEntry,
+  type AudioMode, type GeneratedAudio, type GenerateAudioRequest, type HistoryEntry, type LibraryEntry,
 } from '../protocol.ts'
 import { AudioPlayer } from './audio-player.tsx'
 import { LibrarySaveDialog, type SaveDialogContext } from './library-save-dialog.tsx'
@@ -24,6 +26,29 @@ export interface StudioReuse {
   voice?: string
   model?: string
   voiceId?: string
+}
+
+/** One row of a model-comparison run. */
+interface CompareResult {
+  model: string
+  state: 'waiting' | 'running' | 'done' | 'error' | 'cancelled'
+  outputs: GeneratedAudio[]
+  error?: string
+}
+
+/** 一个生成任务（单模型或模型对比）：提交即建任务，非阻塞；可取消、可并行。 */
+interface StudioTask {
+  id: string
+  mode: AudioMode
+  kind: 'single' | 'compare'
+  prompt?: string
+  label: string
+  status: 'running' | 'done' | 'failed' | 'cancelled'
+  progress: { done: number; total: number; current: string }
+  startedAt: number
+  finishedAt?: number
+  groups: CompareResult[]
+  error?: string
 }
 
 /** 每模型可覆盖的参数行（留空 = 自动，沿用上方全局配置）。 */
@@ -44,7 +69,7 @@ const OVERRIDE_ROWS: Array<{ key: string; label: string; type: 'text' | 'number'
 /** 每模型覆盖值 → 请求字段的数值/类型转换（空值跳过）。 */
 function overrideSpread(override: Record<string, string>): Partial<GenerateAudioRequest> {
   const out: Partial<GenerateAudioRequest> = {}
-  const val = override.format?.trim() ?? ''
+  const val = (override.format ?? '').trim()
   if (val !== '') out.format = val
   const num = (key: string): number | undefined => {
     const raw = (override[key] ?? '').trim()
@@ -54,17 +79,17 @@ function overrideSpread(override: Record<string, string>): Partial<GenerateAudio
   }
   const duration = num('duration')
   if (duration !== undefined) out.duration = duration
-  const voice = override.voice?.trim() ?? ''
+  const voice = (override.voice ?? '').trim()
   if (voice !== '') out.voice = voice
   const speed = num('speed')
   if (speed !== undefined) out.speed = speed
-  const emotion = override.emotion?.trim() ?? ''
+  const emotion = (override.emotion ?? '').trim()
   if (emotion !== '') out.emotion = emotion
   const sampleRate = num('sample_rate')
   if (sampleRate !== undefined) out.sampleRate = sampleRate
   const bitrate = num('bitrate')
   if (bitrate !== undefined) out.bitrate = bitrate
-  const lyrics = override.lyrics?.trim() ?? ''
+  const lyrics = (override.lyrics ?? '').trim()
   if (lyrics !== '') out.lyrics = lyrics
   const seed = num('seed')
   if (seed !== undefined) out.seed = seed
@@ -84,7 +109,11 @@ function useConfig(scope: AudiogenScope) {
 function useHistory(): { entries: HistoryEntry[]; reload: () => void; clear: () => void } {
   const [entries, setEntries] = useState<HistoryEntry[]>([])
   const reload = (): void => {
-    void fetch(HISTORY_API.list, { method: 'POST' })
+    void fetch(HISTORY_API.list, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    })
       .then(async response => {
         const body = await response.json() as { ok?: boolean; history?: HistoryEntry[] }
         if (body.ok === true) setEntries(body.history ?? [])
@@ -93,7 +122,11 @@ function useHistory(): { entries: HistoryEntry[]; reload: () => void; clear: () 
   }
   useEffect(() => { reload() }, [])
   const clear = (): void => {
-    void fetch(HISTORY_API.clear, { method: 'POST' })
+    void fetch(HISTORY_API.clear, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    })
       .then(() => reload())
       .catch(() => { /* best-effort */ })
   }
@@ -170,10 +203,6 @@ export function StudioView(props: {
   const [prompt, setPrompt] = useState('')
   const [previewText, setPreviewText] = useState('')
   const [model, setModel] = useState('')
-  // 多模型对比：同一提示词逐模型生成
-  const [selectedModels, setSelectedModels] = useState<string[]>([])
-  // 每模型参数覆盖（留空 = 自动沿用全局配置）
-  const [overrides, setOverrides] = useState<Record<string, Record<string, string>>>({})
   const [voice, setVoice] = useState('')
   const [speed, setSpeed] = useState('')
   const [duration, setDuration] = useState('')
@@ -192,14 +221,21 @@ export function StudioView(props: {
   const [bitrate, setBitrate] = useState('')
   const [audioChannel, setAudioChannel] = useState('')
   const [subtitle, setSubtitle] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [progress, setProgress] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [results, setResults] = useState<Array<{ model: string; outputs: GeneratedAudio[]; error?: string }>>([])
+  // 任务列表：提交即建任务，非阻塞；可同时存在多个进行中的任务。
+  const [tasks, setTasks] = useState<StudioTask[]>([])
+  const tasksRef = useRef<StudioTask[]>([])
+  useEffect(() => { tasksRef.current = tasks }, [tasks])
+  const taskControllers = useRef(new Map<string, AbortController[]>())
   // 资源库
   const [saveToLibrary, setSaveToLibrary] = useState(cfg?.autoSaveToLibrary === true)
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
   const [saveDialog, setSaveDialog] = useState<SaveDialogState | null>(null)
+  // 模型对比
+  const [compareMode, setCompareMode] = useState(false)
+  const [compareModels, setCompareModels] = useState<string[]>([])
+  // 每模型参数覆盖（留空 = 自动沿用全局）
+  const [overrides, setOverrides] = useState<Record<string, Record<string, string>>>({})
   const { entries, reload, clear } = useHistory()
   // 音色设计模式的厂商/渠道选择（默认渠道）
   const [designChannelId, setDesignChannelId] = useState('')
@@ -224,129 +260,195 @@ export function StudioView(props: {
   }, [modelOptions.models, mode])
 
   useEffect(() => {
-    if (visibleModels.length === 0) return
-    setSelectedModels(current => {
-      const valid = current.filter(item => visibleModels.includes(item))
-      if (valid.length > 0) return valid
-      return [visibleModels[0]!]
-    })
-  }, [visibleModels])
-
-  // 每模型覆盖值随勾选模型收缩（保留仍在勾选中的覆盖）
-  useEffect(() => {
-    setOverrides(current => {
-      const next: Record<string, Record<string, string>> = {}
-      for (const alias of selectedModels) {
-        if (current[alias] !== undefined) next[alias] = current[alias]!
-      }
-      return next
-    })
-  }, [selectedModels])
-
-  const setOverrideValue = (model: string, key: string, value: string): void => {
-    setOverrides(current => ({
-      ...current,
-      [model]: { ...(current[model] ?? {}), [key]: value },
-    }))
-  }
-
-  useEffect(() => {
     if (visibleModels.length > 0 && !visibleModels.includes(model)) {
       setModel(visibleModels[0]!)
     }
   }, [visibleModels, model])
+
+  // 切模式时清空对比结果（参数含义变了）
+  useEffect(() => {
+    setCompareModels(current => current.filter(item => visibleModels.includes(item)))
+  }, [mode, visibleModels])
+
+  // 进入对比模式时确保至少选中 2 个有效模型
+  useEffect(() => {
+    if (!compareMode) return
+    setCompareModels(current => {
+      const valid = current.filter(item => visibleModels.includes(item))
+      const rest = visibleModels.filter(item => !valid.includes(item))
+      while (valid.length < 2 && rest.length > 0) valid.push(rest.shift()!)
+      return valid
+    })
+  }, [compareMode, visibleModels])
 
   // 资源库「用此音色」回填
   useEffect(() => {
     if (reuse === undefined || reuse === null) return
     setMode(reuse.mode)
     if (reuse.voiceId !== undefined || reuse.voice !== undefined) setVoice(reuse.voiceId ?? reuse.voice ?? '')
-    if (reuse.model !== undefined && reuse.model !== '') {
-      setModel(reuse.model)
-      setSelectedModels([reuse.model])
-    }
+    if (reuse.model !== undefined && reuse.model !== '') setModel(reuse.model)
   }, [reuse?.nonce])
 
-  const submit = async (): Promise<void> => {
+  /** Build the shared generation request for one model. */
+  const requestOf = (modelName: string): GenerateAudioRequest => ({
+    mode,
+    model: modelName,
+    prompt: prompt.trim(),
+    saveToLibrary,
+    ...(mode === 'voice_design' && designChannelId !== '' ? { channelId: designChannelId } : {}),
+    ...(previewText.trim() !== '' ? { previewText: previewText.trim() } : {}),
+    ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
+    ...(speed.trim() !== '' ? { speed: Number(speed) } : {}),
+    ...(duration.trim() !== '' ? { duration: Number(duration) } : {}),
+    ...(lyrics.trim() !== '' ? { lyrics: lyrics.trim() } : {}),
+    ...(instrumental ? { isInstrumental: true } : {}),
+    ...(loop ? { loop: true } : {}),
+    ...(promptInfluence.trim() !== '' ? { promptInfluence: Number(promptInfluence) } : {}),
+    ...(format.trim() !== '' ? { format: format.trim() } : {}),
+    ...(emotion.trim() !== '' ? { emotion: emotion.trim() } : {}),
+    ...(vol.trim() !== '' ? { vol: Number(vol) } : {}),
+    ...(pitch.trim() !== '' ? { pitch: Number(pitch) } : {}),
+    ...(toneText.trim() !== '' ? { pronunciationTone: toneText.split('\n').map(item => item.trim()).filter(item => item !== '') } : {}),
+    ...(sampleRate.trim() !== '' ? { sampleRate: Number(sampleRate) } : {}),
+    ...(bitrate.trim() !== '' ? { bitrate: Number(bitrate) } : {}),
+    ...(audioChannel.trim() !== '' ? { audioChannel: Number(audioChannel) } : {}),
+    ...(subtitle ? { subtitleEnable: true } : {}),
+  })
+
+  const applyResponse = (response: Awaited<ReturnType<AudiogenApi['generate']>>): GeneratedAudio[] => {
+    const generated = response.outputs ?? []
+    if ((response.resources?.length ?? 0) > 0 && saveToLibrary) {
+      setSavedIds(current => new Set([...current, ...generated.map(item => item.id)]))
+      props.showToast('已保存到资源库')
+      props.onLibraryChanged()
+    }
+    reload()
+    return generated
+  }
+
+  const patchTask = (taskId: string, fn: (task: StudioTask) => StudioTask): void => {
+    setTasks(current => current.map(task => task.id === taskId ? fn(task) : task))
+  }
+
+  /** 提交即建任务：非阻塞，可继续发起其他生成；并发由宿主「最大并发生成数」闸门控制。 */
+  const submit = (): void => {
     if (prompt.trim() === '') {
       setError(tt('prompt.required'))
       return
     }
-    // 待生成模型列表：音色设计单渠道；其余支持多模型（同一提示词逐一生成，供对比）。
-    const targets = mode === 'voice_design'
-      ? ['']
-      : selectedModels.length > 0
-        ? selectedModels
-        : (model !== '' ? [model] : visibleModels.length > 0 ? [visibleModels[0]!] : [])
-    if (targets.length === 0) {
+    const isCompare = compareMode && needModel
+    const models = isCompare ? (compareModels.length >= 2 ? compareModels : visibleModels.slice(0, 2)) : []
+    if (isCompare && models.length < 2) {
+      setError('请至少选择 2 个模型进行对比')
+      return
+    }
+    const singleModel = isCompare ? '' : (model || visibleModels[0] || '')
+    if (!isCompare && singleModel === '') {
       setError('当前模式暂无可用模型')
       return
     }
-    setLoading(true)
     setError(null)
-    setProgress('')
-    const gathered: Array<{ model: string; outputs: GeneratedAudio[]; error?: string }> = []
-    let anySaved = false
-    try {
-      for (const [index, target] of targets.entries()) {
-        setProgress(`生成中 ${index + 1}/${targets.length}（${target || '音色设计'}）…`)
-        let response
-        try {
-          response = await api.generate({
-            mode,
-            model: target,
-            prompt: prompt.trim(),
-            saveToLibrary,
-            ...(mode === 'voice_design' && designChannelId !== '' ? { channelId: designChannelId } : {}),
-            ...(previewText.trim() !== '' ? { previewText: previewText.trim() } : {}),
-            ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
-            ...(speed.trim() !== '' ? { speed: Number(speed) } : {}),
-            ...(duration.trim() !== '' ? { duration: Number(duration) } : {}),
-            ...(lyrics.trim() !== '' ? { lyrics: lyrics.trim() } : {}),
-            ...(instrumental ? { isInstrumental: true } : {}),
-            ...(loop ? { loop: true } : {}),
-            ...(promptInfluence.trim() !== '' ? { promptInfluence: Number(promptInfluence) } : {}),
-            ...(format.trim() !== '' ? { format: format.trim() } : {}),
-            ...(emotion.trim() !== '' ? { emotion: emotion.trim() } : {}),
-            ...(vol.trim() !== '' ? { vol: Number(vol) } : {}),
-            ...(pitch.trim() !== '' ? { pitch: Number(pitch) } : {}),
-            ...(toneText.trim() !== '' ? { pronunciationTone: toneText.split('\n').map(item => item.trim()).filter(item => item !== '') } : {}),
-            ...(sampleRate.trim() !== '' ? { sampleRate: Number(sampleRate) } : {}),
-            ...(bitrate.trim() !== '' ? { bitrate: Number(bitrate) } : {}),
-            ...(audioChannel.trim() !== '' ? { audioChannel: Number(audioChannel) } : {}),
-            ...(subtitle ? { subtitleEnable: true } : {}),
-            // 每模型参数覆盖（后置覆盖全局；仅音色设计外生效）
-            ...(target === '' ? {} : overrideSpread(overrides[target] ?? {})),
-          })
-        } catch (err) {
-          gathered.push({ model: target, outputs: [], error: err instanceof Error ? err.message : String(err) })
-          continue
-        }
-        if (!response.ok) {
-          gathered.push({ model: target, outputs: [], error: response.message ?? '生成失败' })
-          continue
-        }
-        const generated = response.outputs ?? []
-        gathered.push({ model: target, outputs: generated })
-        if ((response.resources?.length ?? 0) > 0 && saveToLibrary) anySaved = true
-      }
-      setResults(gathered)
-      if (anySaved) {
-        setSavedIds(current => new Set([...current, ...gathered.flatMap(group => group.outputs.map(item => item.id))]))
-        props.showToast('已保存到资源库')
-        props.onLibraryChanged()
-      }
-      const failed = gathered.filter(group => group.error !== undefined && group.outputs.length === 0)
-      if (failed.length > 0 && failed.length === gathered.length) {
-        setError(failed.map(group => `「${group.model || '音色设计'}」${group.error}`).join('；'))
-      }
-      reload()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setLoading(false)
-      setProgress('')
+    const taskId = `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const planModels = isCompare ? models : [singleModel]
+    // 参数快照：任务启动后表单再变化不影响本次生成；每模型再叠加各自覆盖。
+    const plan = planModels.map(modelName => ({
+      model: modelName,
+      request: { ...requestOf(modelName), taskId, ...overrideSpread(overrides[modelName] ?? {}) },
+    }))
+    const task: StudioTask = {
+      id: taskId,
+      mode,
+      prompt: prompt.trim(),
+      kind: isCompare ? 'compare' : 'single',
+      label: isCompare ? `对比 ${models.join(' / ')}` : singleModel,
+      status: 'running',
+      progress: { done: 0, total: plan.length, current: '' },
+      startedAt: Date.now(),
+      groups: planModels.map(modelName => ({ model: modelName, state: 'waiting' as const, outputs: [] as GeneratedAudio[] })),
     }
+    setTasks(current => [task, ...current])
+    void runTask(taskId, plan)
+  }
+
+  /** 执行一个任务：并行发起（宿主闸门限流），进度回写；支持取消。 */
+  const runTask = async (taskId: string, plan: Array<{ model: string; request: GenerateAudioRequest }>): Promise<void> => {
+    const controllers: AbortController[] = []
+    taskControllers.current.set(taskId, controllers)
+    const taskIsFinished = (): 'running' | 'cancelled' | 'pending' => {
+      const task = tasksRef.current.find(candidate => candidate.id === taskId)
+      if (task === undefined) return 'pending'
+      if (task.status === 'cancelled') return 'cancelled'
+      return 'running'
+    }
+    await Promise.allSettled(plan.map(async (step) => {
+      const controller = new AbortController()
+      controllers.push(controller)
+      patchTask(taskId, task => ({
+        ...task,
+        progress: { ...task.progress, current: step.model },
+        groups: task.groups.map(group => group.model === step.model ? { ...group, state: 'running' as const, error: undefined } : group),
+      }))
+      try {
+        const response = await api.generate(step.request, controller.signal)
+        if (!response.ok) throw new Error(response.message ?? '生成失败')
+        const generated = applyResponse(response)
+        patchTask(taskId, task => ({
+          ...task,
+          groups: task.groups.map(group => group.model === step.model ? { ...group, state: 'done' as const, outputs: generated } : group),
+        }))
+      } catch (err) {
+        if (controller.signal.aborted === true || taskIsFinished() === 'cancelled') {
+          patchTask(taskId, task => ({
+            ...task,
+            groups: task.groups.map(group => group.model === step.model ? { ...group, state: 'cancelled' as const, error: undefined } : group),
+          }))
+        } else {
+          patchTask(taskId, task => ({
+            ...task,
+            groups: task.groups.map(group => group.model === step.model
+              ? { ...group, state: 'error' as const, error: err instanceof Error ? err.message : String(err) }
+              : group),
+          }))
+        }
+      } finally {
+        patchTask(taskId, task => ({ ...task, progress: { ...task.progress, done: task.progress.done + 1, current: '' } }))
+      }
+    }))
+    taskControllers.current.delete(taskId)
+    setTasks(current => current.map(task => {
+      if (task.id !== taskId) return task
+      if (task.status === 'cancelled') return { ...task, finishedAt: task.finishedAt ?? Date.now() }
+      const done = task.groups.filter(group => group.state === 'done').length
+      const failed = task.groups.filter(group => group.state === 'error').length
+      const cancelled = task.groups.filter(group => group.state === 'cancelled').length
+      if (done > 0) return { ...task, status: 'done', finishedAt: Date.now() }
+      if (cancelled === task.groups.length) return { ...task, status: 'cancelled', finishedAt: Date.now() }
+      return {
+        ...task,
+        status: 'failed',
+        finishedAt: Date.now(),
+        error: failed > 0 ? task.groups.filter(group => group.state === 'error').map(group => `「${group.model}」${group.error ?? ''}`).join('；') : '生成失败',
+      }
+    }))
+  }
+
+  /** 取消任务：本地中止在途 fetch + 宿主中断上游请求，剩余模型跳过。 */
+  const cancelTask = (taskId: string): void => {
+    for (const controller of taskControllers.current.get(taskId) ?? []) controller.abort()
+    void api.cancelTask(taskId)
+    patchTask(taskId, task => ({
+      ...task,
+      status: 'cancelled',
+      finishedAt: Date.now(),
+      progress: { ...task.progress, current: '' },
+      groups: task.groups.map(group => group.state === 'waiting' || group.state === 'running'
+        ? { ...group, state: 'cancelled' as const, error: undefined }
+        : group),
+    }))
+  }
+
+  const removeTask = (taskId: string): void => {
+    setTasks(current => current.filter(task => task.id !== taskId))
   }
 
   const openSaveDialog = (files: GeneratedAudio[], context: SaveDialogContext): void => {
@@ -362,6 +464,49 @@ export function StudioView(props: {
     props.onLibraryChanged()
   }
 
+  /** One result card (single mode shares it with the compare groups). */
+  const renderAudioCard = (audio: GeneratedAudio, index: number, label: string, contextModel: string): React.JSX.Element => {
+    const saved = savedIds.has(audio.id)
+    return (
+      <div className={css.audioCard} key={`${label}-${audio.id}`} data-saved={saved ? 'true' : 'false'}>
+        <div className={css.audioCardHead}>
+          {audio.voiceId !== undefined ? <span className={css.voiceIdChip} title="新音色 ID">新音色 {audio.voiceId}</span> : null}
+          {saved ? (
+            <span className={css.savedChip}><CheckIcon /> 已入库</span>
+          ) : null}
+          <span className={css.audioCardIndex}>#{index + 1}</span>
+        </div>
+        <AudioPlayer src={dataUrlOf(audio)} itemKey={`${label}-${audio.id}`} />
+        <div className={css.audioCardActions}>
+          <a className={css.ghostButton} href={dataUrlOf(audio)} download={`generated-${index + 1}.${audio.mime.split('/')[1]?.replace('mpeg', 'mp3') ?? 'mp3'}`}>
+            <DownloadIcon /> 下载
+          </a>
+          {saved ? (
+            <button type="button" className={css.ghostButton} onClick={() => props.showToast('该音频已加入资源库')}>
+              <CheckIcon /> 已入库
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={css.ghostButton}
+              onClick={() => openSaveDialog([audio], {
+                mode,
+                prompt: prompt.trim(),
+                ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
+                ...(audio.voiceId === undefined ? {} : { voiceId: audio.voiceId }),
+                ...(contextModel !== '' ? { model: contextModel } : {}),
+                ...(channels.length > 0 ? { channel: channels.find(candidate => candidate.id === (mode === 'voice_design' ? designChannelId : modelOptions.defaultChannelId))?.name ?? channels[0]?.name ?? '' } : {}),
+                params: requestOf(contextModel) as unknown as Record<string, unknown>,
+              })}
+            >
+              <StarIcon /> 加入资源库
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   const modeLabel = useMemo(() => {
     if (mode === 'tts') return tt('mode.tts')
     if (mode === 'music') return tt('mode.music')
@@ -370,6 +515,7 @@ export function StudioView(props: {
   }, [mode])
 
   const needModel = mode !== 'voice_design'
+  const runningCount = tasks.filter(task => task.status === 'running').length
 
   return (
     <div className={css.studio}>
@@ -415,64 +561,87 @@ export function StudioView(props: {
         ) : null}
 
         {needModel ? (
-          <label className={css.label}>
-            <span>{tt('model.label')}（可多选，同一提示词逐个生成以对比）</span>
-            <div className={css.modelCheckList}>
-              {visibleModels.length === 0 ? <p className={css.hint}>（当前模式暂无可用模型）</p> : null}
-              {visibleModels.map(item => (
-                <label key={item} className={css.checkbox}>
-                  <input
-                    type="checkbox"
-                    checked={selectedModels.includes(item)}
-                    onChange={event => {
-                      const checked = event.target.checked
-                      setSelectedModels(current => checked ? [...new Set([...current, item])] : current.filter(alias => alias !== item))
-                      if (checked && (model === '' || !visibleModels.includes(model))) setModel(item)
-                    }}
-                  />
-                  <span title="点击生成对比">{item}</span>
-                </label>
-              ))}
-            </div>
+          <label className={css.checkbox} title="选择多个模型，用相同参数逐个生成，便于对比效果">
+            <input type="checkbox" checked={compareMode} onChange={event => setCompareMode(event.target.checked)} />
+            <span>模型对比（多模型同参数生成）</span>
           </label>
         ) : null}
 
-        {needModel && selectedModels.length > 0 ? (
-          <details className={css.advanced}>
-            <summary>每模型参数覆盖（默认自动：沿用上方相同配置，如输出格式均为 mp3）</summary>
-            <div className={css.overrideTable}>
-              <div className={css.overrideRow}>
-                <span className={`${css.overrideCell} ${css.overrideCellHead}`} />
-                {selectedModels.map(item => <span key={item} className={`${css.overrideCell} ${css.overrideCellHead}`}>{item}</span>)}
+        {needModel ? (
+          compareMode ? (
+            <div className={css.compareBox}>
+              <span className={css.label}>对比模型（至少 2 个，最多 4 个）</span>
+              <div className={css.compareChips}>
+                {visibleModels.map(item => (
+                  <button
+                    key={item}
+                    type="button"
+                    className={css.compareChip}
+                    data-active={compareModels.includes(item) ? 'true' : 'false'}
+                    onClick={() => setCompareModels(current => current.includes(item)
+                      ? current.filter(candidate => candidate !== item)
+                      : current.length < 4 ? [...current, item] : current)}
+                  >
+                    {item}
+                  </button>
+                ))}
+                {visibleModels.length === 0 ? <p className={css.hint}>当前模式暂无可用模型</p> : null}
               </div>
-              {OVERRIDE_ROWS.map(row => (
-                <div key={row.key} className={css.overrideRow}>
-                  <span className={css.overrideCell} title={row.label}>{row.label}</span>
-                  {selectedModels.map(item => {
-                    const value = overrides[item]?.[row.key] ?? ''
-                    return (
-                      <span key={item} className={css.overrideCell}>
-                        {row.type === 'select' ? (
-                          <select className={css.input} value={value} onChange={event => setOverrideValue(item, row.key, event.target.value)}>
-                            <option value="">自动</option>
-                            {row.options!.map(option => <option key={option} value={option}>{option}</option>)}
-                          </select>
-                        ) : (
-                          <input
-                            className={css.input}
-                            type={row.type === 'number' ? 'number' : 'text'}
-                            value={value}
-                            placeholder={row.placeholder ?? '自动'}
-                            onChange={event => setOverrideValue(item, row.key, event.target.value)}
-                          />
-                        )}
-                      </span>
-                    )
-                  })}
+              <details className={css.advanced}>
+                <summary>每模型参数覆盖（默认自动：沿用上方相同配置）</summary>
+                <div className={css.overrideTable}>
+                  <div className={css.overrideRow}>
+                    <span className={`${css.overrideCell} ${css.overrideCellHead}`} />
+                    {compareModels.map(item => <span key={item} className={`${css.overrideCell} ${css.overrideCellHead}`}>{item}</span>)}
+                  </div>
+                  {OVERRIDE_ROWS.map(row => (
+                    <div key={row.key} className={css.overrideRow}>
+                      <span className={css.overrideCell} title={row.label}>{row.label}</span>
+                      {compareModels.map(item => {
+                        const value = overrides[item]?.[row.key] ?? ''
+                        return (
+                          <span key={item} className={css.overrideCell}>
+                            {row.type === 'select' ? (
+                              <select className={css.input} value={value} onChange={event => {
+                                setOverrides(current => ({
+                                  ...current,
+                                  [item]: { ...(current[item] ?? {}), [row.key]: event.target.value },
+                                }))
+                              }}>
+                                <option value="">自动</option>
+                                {row.options!.map(option => <option key={option} value={option}>{option}</option>)}
+                              </select>
+                            ) : (
+                              <input
+                                className={css.input}
+                                type={row.type === 'number' ? 'number' : 'text'}
+                                value={value}
+                                placeholder={row.placeholder ?? '自动'}
+                                onChange={event => {
+                                  setOverrides(current => ({
+                                    ...current,
+                                    [item]: { ...(current[item] ?? {}), [row.key]: event.target.value },
+                                  }))
+                                }}
+                              />
+                            )}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </details>
             </div>
-          </details>
+          ) : (
+            <label className={css.label}>
+              <span>{tt('model.label')}</span>
+              <select className={css.input} value={model} onChange={event => setModel(event.target.value)}>
+                {visibleModels.length === 0 ? <option value="">（当前模式暂无可用模型）</option> : null}
+                {visibleModels.map(item => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </label>
+          )
         ) : null}
 
         {mode === 'tts' ? (
@@ -613,90 +782,78 @@ export function StudioView(props: {
         </label>
 
         {!connected && <p className={css.hint}>{tt('config.missing')}</p>}
-        <button type="button" className={css.generate} disabled={loading || !connected || (needModel && visibleModels.length === 0)} onClick={() => void submit()}>
-          {loading ? (progress !== '' ? progress : tt('generating')) : tt('generate')}
+        <button
+          type="button"
+          className={css.generate}
+          disabled={!connected || (compareMode && needModel ? compareModels.length < 2 : needModel && visibleModels.length === 0)}
+          onClick={submit}
+        >
+          {(compareMode && needModel ? '对比生成' : tt('generate'))}
         </button>
+        {runningCount > 0 ? <p className={css.hint}>进行中任务：{runningCount} 个（并发上限在「设置 → 插件 → AI 音频」调整）</p> : null}
       </div>
 
       <div className={css.resultCol}>
         {error !== null ? <p className={css.error}>{error}</p> : null}
-        {results.length === 0 ? (
+        {tasks.length === 0 ? (
           <div className={css.resultEmpty}>
             <span className={css.resultEmptyIcon}>🎵</span>
             <p>{tt('result.empty')}</p>
-            <p className={css.resultEmptyHint}>生成结果将在这里播放、下载，并可一键加入资源库</p>
+            <p className={css.resultEmptyHint}>点击「开始生成」即创建一个任务，可同时进行多个；勾选「模型对比」用多个模型同参数生成对比</p>
           </div>
         ) : (
-          <>
-            <div className={css.resultMeta}>
-              <span>{tt('result.done', { count: results.reduce((sum, group) => sum + group.outputs.length, 0) })}</span>
-              <span className={css.resultModeChip}>{modeLabel}</span>
-            </div>
-            <div className={css.resultGroups}>
-              {results.map((group, groupIndex) => (
-                <div className={css.resultGroup} key={`${group.model}-${groupIndex}`}>
-                  <div className={css.resultGroupHead}>
-                    <span className={css.resultGroupChip}>{group.model || '音色设计'}</span>
-                    {group.error !== undefined ? <span className={css.resultGroupError}>生成失败：{group.error}</span> : null}
-                    {group.outputs.length > 0 ? <span className={css.resultGroupCount}>{group.outputs.length} 段</span> : null}
+          <div className={css.taskList}>
+            {tasks.map(task => {
+              const elapsed = task.finishedAt !== undefined
+                ? Math.round((task.finishedAt - task.startedAt) / 1000)
+                : Math.round((Date.now() - task.startedAt) / 1000)
+              const statusText = task.status === 'running'
+                ? `生成中 ${task.progress.done}/${task.progress.total}${task.progress.current !== '' ? ` · ${task.progress.current}` : ''} · ${elapsed}s`
+                : task.status === 'done'
+                  ? `完成 · ${task.groups.reduce((sum, group) => sum + group.outputs.length, 0)} 段 · ${elapsed}s`
+                  : task.status === 'cancelled'
+                    ? '已取消'
+                    : '失败'
+              return (
+                <div className={css.taskCard} key={task.id} data-state={task.status}>
+                  <div className={css.taskHead}>
+                    <span className={css.resultModeChip}>{task.mode}</span>
+                    <span className={css.taskLabel} title={task.prompt}>{task.label}</span>
+                    <span className={css.taskStatus} data-state={task.status}>{statusText}</span>
+                    <span className={css.taskActions}>
+                      {task.status === 'running' ? (
+                        <button type="button" className={css.ghostButton} onClick={() => cancelTask(task.id)}>取消</button>
+                      ) : null}
+                      <button type="button" className={css.ghostButton} onClick={() => removeTask(task.id)}>移除</button>
+                    </span>
                   </div>
-                  {group.outputs.length > 0 ? (
-                    <div className={css.audioList}>
-                      {group.outputs.map((audio, index) => {
-                        const saved = savedIds.has(audio.id)
-                        return (
-                          <div className={css.audioCard} key={audio.id} data-saved={saved ? 'true' : 'false'}>
-                            <div className={css.audioCardHead}>
-                              {audio.voiceId !== undefined ? <span className={css.voiceIdChip} title="新音色 ID">新音色 {audio.voiceId}</span> : null}
-                              {saved ? (
-                                <span className={css.savedChip}><CheckIcon /> 已入库</span>
-                              ) : null}
-                              <span className={css.audioCardIndex}>#{index + 1}</span>
-                            </div>
-                            <AudioPlayer src={dataUrlOf(audio)} itemKey={audio.id} />
-                            <div className={css.audioCardActions}>
-                              <a className={css.ghostButton} href={dataUrlOf(audio)} download={`generated-${groupIndex + 1}-${index + 1}.${audio.mime.split('/')[1]?.replace('mpeg', 'mp3') ?? 'mp3'}`}>
-                                <DownloadIcon /> 下载
-                              </a>
-                              {saved ? (
-                                <button type="button" className={css.ghostButton} onClick={() => props.showToast('该音频已加入资源库')}>
-                                  <CheckIcon /> 已入库
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className={css.ghostButton}
-                                  onClick={() => openSaveDialog([audio], {
-                                    mode,
-                                    prompt: prompt.trim(),
-                                    ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
-                                    ...(audio.voiceId === undefined ? {} : { voiceId: audio.voiceId }),
-                                    ...(group.model !== '' ? { model: group.model } : {}),
-                                    ...(channels.length > 0 ? { channel: channels.find(candidate => candidate.id === (mode === 'voice_design' ? designChannelId : modelOptions.defaultChannelId))?.name ?? channels[0]?.name ?? '' } : {}),
-                                    params: {
-                                      mode,
-                                      model: mode === 'voice_design' ? '' : group.model,
-                                      prompt: prompt.trim(),
-                                      ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
-                                      ...(speed.trim() !== '' ? { speed: Number(speed) } : {}),
-                                      ...(duration.trim() !== '' ? { duration: Number(duration) } : {}),
-                                      ...(format.trim() !== '' ? { format: format.trim() } : {}),
-                                    },
-                                  })}
-                                >
-                                  <StarIcon /> 加入资源库
-                                </button>
-                              )}
-                            </div>
+                  {task.error !== undefined ? <p className={css.hint} data-error>{task.error}</p> : null}
+                  <div className={css.compareBoard}>
+                    {task.groups.map(group => (
+                      <div className={css.compareGroup} key={group.model} data-state={group.state}>
+                        <div className={css.compareGroupHead}>
+                          <span className={css.compareModelName}>{group.model}</span>
+                          <span className={css.compareState}>
+                            {group.state === 'waiting' ? '等待中…'
+                              : group.state === 'running' ? '生成中…'
+                                : group.state === 'done' ? <><CheckIcon /> 完成</>
+                                  : group.state === 'cancelled' ? '已取消'
+                                    : '失败'}
+                          </span>
+                        </div>
+                        {group.state === 'error' ? <p className={css.hint} data-error>{group.error}</p> : null}
+                        {group.outputs.length > 0 ? (
+                          <div className={css.audioList}>
+                            {group.outputs.map((audio, index) => renderAudioCard(audio, index, group.model, group.model))}
                           </div>
-                        )
-                      })}
-                    </div>
-                  ) : null}
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </>
+              )
+            })}
+          </div>
         )}
       </div>
 

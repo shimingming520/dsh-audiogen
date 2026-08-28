@@ -28,6 +28,7 @@ export interface AudioGenSettings {
   allowAgentAudioGeneration?: boolean
   defaultModel?: string
   autoSaveToLibrary?: boolean
+  maxConcurrentGenerations?: number
 }
 
 export interface AudioGenSettingsCardState extends CardShell {
@@ -37,6 +38,7 @@ export interface AudioGenSettingsCardState extends CardShell {
   allowAgentAudioGeneration: CardFieldState
   defaultModel: CardFieldState
   autoSaveToLibrary: CardFieldState
+  maxConcurrentGenerations: CardFieldState
 }
 
 export interface AudioGenSettingsCardFace extends CardActions {
@@ -57,6 +59,7 @@ export class AudioGenSettingsCardController {
       booleanField('allowAgentAudioGeneration'),
       textField('defaultModel'),
       booleanField('autoSaveToLibrary'),
+      textField('maxConcurrentGenerations'),
     ])
     this.channelsForm = new ChannelsForm(scope)
   }
@@ -72,6 +75,7 @@ export class AudioGenSettingsCardController {
       allowAgentAudioGeneration: this.form.field('allowAgentAudioGeneration'),
       defaultModel: this.form.field('defaultModel'),
       autoSaveToLibrary: this.form.field('autoSaveToLibrary'),
+      maxConcurrentGenerations: this.form.field('maxConcurrentGenerations'),
     }
   }
 
@@ -721,6 +725,20 @@ export function AudioGenSettingsCard(props: AudioGenSettingsCardProps) {
           <div className={css.field}>
             <label className={css.label}>
               <input type="checkbox" checked={state.autoSaveToLibrary.text === 'true'} disabled={!state.writable} onChange={event => props.edit('autoSaveToLibrary', String(event.target.checked))} /> {t('settings.autoSaveLibrary')}
+            </label>
+          </div>
+          <div className={css.field}>
+            <label className={css.label}>
+              <span>{t('settings.maxConcurrent')}</span>
+              <input
+                type="number"
+                min="1"
+                max="20"
+                className={css.input}
+                value={state.maxConcurrentGenerations.text}
+                disabled={!state.writable}
+                onChange={event => props.edit('maxConcurrentGenerations', event.target.value)}
+              />
             </label>
           </div>
           <div className={css.footer}>
