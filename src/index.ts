@@ -41,7 +41,8 @@ export interface Config {
   defaultChannelId?: string
   defaultModel?: string
   autoSaveToLibrary?: boolean
-  maxConcurrentGenerations?: number
+  /** 设置卡按文本编辑，保存值可能是数字或数字字符串。 */
+  maxConcurrentGenerations?: number | string
 }
 
 const DEFAULT_MAX_CONCURRENT = 5
@@ -64,7 +65,7 @@ export const Config: z<Config> = z.object({
   defaultChannelId: z.string().default(''),
   defaultModel: z.string().default(''),
   autoSaveToLibrary: z.boolean().default(false),
-  maxConcurrentGenerations: z.number().default(DEFAULT_MAX_CONCURRENT),
+  maxConcurrentGenerations: z.union([z.number(), z.string()]).default(DEFAULT_MAX_CONCURRENT),
 })
 
 const DEFAULT_ENABLED = true
@@ -184,9 +185,11 @@ export function apply(ctx: Context, config?: Config): void {
       defaultChannelId,
       defaultModel: typeof value.defaultModel === 'string' ? value.defaultModel.trim() : '',
       autoSaveToLibrary: value.autoSaveToLibrary === true,
-      maxConcurrentGenerations: typeof value.maxConcurrentGenerations === 'number' && Number.isFinite(value.maxConcurrentGenerations)
-        ? Math.max(1, Math.min(20, Math.floor(value.maxConcurrentGenerations)))
-        : DEFAULT_MAX_CONCURRENT,
+      maxConcurrentGenerations: (() => {
+        const rawMax = value.maxConcurrentGenerations
+        const parsedMax = typeof rawMax === 'number' ? rawMax : typeof rawMax === 'string' && rawMax.trim() !== '' ? Number(rawMax.trim()) : NaN
+        return Number.isFinite(parsedMax) ? Math.max(1, Math.min(20, Math.floor(parsedMax))) : DEFAULT_MAX_CONCURRENT
+      })(),
     }
   }
 

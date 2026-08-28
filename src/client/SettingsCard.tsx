@@ -737,7 +737,12 @@ export function AudioGenSettingsCard(props: AudioGenSettingsCardProps) {
                 className={css.input}
                 value={state.maxConcurrentGenerations.text}
                 disabled={!state.writable}
-                onChange={event => props.edit('maxConcurrentGenerations', event.target.value)}
+                onChange={event => {
+                  const raw = event.target.value
+                  const parsed = Number(raw)
+                  const value = raw === '' || !Number.isFinite(parsed) ? '' : String(Math.max(1, Math.min(20, Math.floor(parsed))))
+                  props.edit('maxConcurrentGenerations', value)
+                }}
               />
             </label>
           </div>
