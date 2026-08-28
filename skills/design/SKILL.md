@@ -1,3 +1,8 @@
+---
+name: dsh-audiogen-voice-design
+description: DSH AI 音频插件（dsh-audiogen）的音色设计技能：调用 generate_audio(mode=voice_design) 并指定厂商/渠道——MiniMax（POST /v1/voice_design，prompt + preview_text）或 ElevenLabs（POST /v1/text-to-voice/design，voice_description + 试听文本 100-1000 字符，过短自动生成；返回 previews[].audio_base_64 与 generated_voice_id 供后续 TTS 复用）。
+whenToUse: 用户请求设计/创建新音色、音色试听，或触发 /audio:design 时使用。
+---
 # 音色/音效设计
 
 ## 触发

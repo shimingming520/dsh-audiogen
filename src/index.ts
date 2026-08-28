@@ -9,6 +9,9 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { existsSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import z from 'schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -81,6 +84,34 @@ function guidanceFor(channels: AudioChannel[], defaultChannelId: string): string
   return `${AUDIOGEN_GUIDANCE} 当前渠道与模型：${table}。`
 }
 
+/**
+ * 把随包分发的技能（skills/<id>/SKILL.md，含 frontmatter）同步到 DSH 用户技能根
+ * `~/.dsh/skills/<id>/SKILL.md` —— DSH web 会话的 skill-filesystem（standard 等
+ * preset 行）会扫描用户根，使会话可直接触发这些技能。仅创建缺失文件，绝不覆盖
+ * 用户已有内容；任何失败仅告警，不影响插件本身。
+ */
+function syncBundledSkills(): void {
+  try {
+    const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)))
+    const sourceRoot = join(packageRoot, 'skills')
+    if (existsSync(sourceRoot) !== true) return
+    const dshHome = process.env.DSH_HOME ?? join(process.env.HOME ?? '', '.dsh')
+    const targetRoot = join(dshHome, 'skills')
+    for (const entry of readdirSync(sourceRoot, { withFileTypes: true })) {
+      if (entry.isDirectory() !== true) continue
+      const sourceFile = join(sourceRoot, entry.name, 'SKILL.md')
+      if (existsSync(sourceFile) !== true) continue
+      const targetDir = join(targetRoot, entry.name)
+      const targetFile = join(targetDir, 'SKILL.md')
+      if (existsSync(targetFile)) continue
+      mkdirSync(targetDir, { recursive: true })
+      copyFileSync(sourceFile, targetFile)
+    }
+  } catch {
+    // 技能同步为最佳努力：失败不阻断插件启动。
+  }
+}
+
 function normalizeChannels(value: unknown): ChannelConfig[] {
   if (!Array.isArray(value)) return []
   const out: ChannelConfig[] = []
@@ -122,6 +153,7 @@ export interface EffectiveConfig {
 }
 
 export function apply(ctx: Context, config?: Config): void {
+  syncBundledSkills()
   let current: () => Config = () => config ?? {}
 
   const resolve = (): EffectiveConfig => {

@@ -1,3 +1,8 @@
+---
+name: dsh-audiogen-tts
+description: DSH AI 音频插件（dsh-audiogen）的 TTS 文本转语音技能：先确认渠道/模型/音色，再调用 generate_audio(mode=tts)；包含 MiniMax 官方 t2a_v2 全字段（语速/音量/音调/情绪/采样率/码率/声道/发音词典/字幕/变声/双音色混合）、ElevenLabs 与 Stable Audio 的对应参数说明，以及常见错误（voice-required、网关 404 Invalid URL 等）的处理。
+whenToUse: 用户提出朗读、配音、语音合成、TTS，或触发 /audio:tts 时使用；MiniMax 必须提供音色 voice_id。
+---
 # TTS 文本转语音
 
 ## 触发

@@ -1,3 +1,8 @@
+---
+name: dsh-audiogen-sfx
+description: DSH AI 音频插件（dsh-audiogen）的音效生成技能：调用 generate_audio(mode=sfx)；覆盖 ElevenLabs（/v1/sound-generation，eleven_text_to_sound_v2，loop 无缝循环、prompt_influence 0-1、duration_seconds 0.5-30）与 MiniMax、Stability 等渠道的对应字段与常见错误处理。
+whenToUse: 用户请求生成音效、提示音、环境音、UI 音，或触发 /audio:sfx 时使用。
+---
 # 音效生成
 
 ## 触发

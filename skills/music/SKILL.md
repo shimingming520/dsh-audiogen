@@ -1,3 +1,8 @@
+---
+name: dsh-audiogen-music
+description: DSH AI 音频插件（dsh-audiogen）的音乐生成技能：调用 generate_audio(mode=music)；覆盖 MiniMax（music-3.0/2.6/cover，lyrics 歌词、is_instrumental 纯音乐、audio_setting 采样率 16000-44100/码率 32000-256000/格式 mp3-wav-pcm、时长）、ElevenLabs（/v1/music，music_v2，时长 3-600s、lyrics_text、force_instrumental）与 Stability（stable-audio 2/2.5/3，官方 v2beta 或 OpenAI 兼容 /v1/audio/speech 双通道，seed/steps/cfg_scale/duration）。
+whenToUse: 用户请求生成音乐、配乐、BGM、纯音乐、歌曲，或触发 /audio:music 时使用；MiniMax 未给歌词且未要求纯音乐时，先补一段歌词或设置 is_instrumental。
+---
 # 音乐生成
 
 ## 触发
