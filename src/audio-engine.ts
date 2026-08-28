@@ -250,6 +250,47 @@ async function elevenLabs(channel: AudioChannel, request: GenerateAudioRequest, 
     accept: 'audio/mpeg, application/json',
   }
 
+  // ------------- ElevenLabs Voice Design（POST /v1/text-to-voice/design） -------------
+  // voice_description 必填；text 100-1000 字符，过短时用 auto_generate_text；
+  // 返回 previews[].audio_base_64 与 previews[].generated_voice_id。
+  if (request.mode === 'voice_design') {
+    const endpoint = `${base}/text-to-voice/design`
+    const previewText = request.previewText?.trim() ?? ''
+    const body: Record<string, unknown> = {
+      voice_description: request.prompt,
+      ...(previewText.length >= 100 ? { text: previewText } : { auto_generate_text: true }),
+    }
+    const response = await fetchWithTimeout(endpoint, {
+      method: 'POST',
+      redirect: 'error',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    }, UPSTREAM_TIMEOUT_MS)
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new AudioGenError(`ElevenLabs voice design API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
+    }
+    const payload = await response.json() as {
+      previews?: Array<{ audio_base_64?: string; generated_voice_id?: string; media_type?: string }>
+    }
+    const previews = payload.previews ?? []
+    if (previews.length === 0) throw new AudioGenError('ElevenLabs voice design returned no previews', 'audio-empty-result')
+    const outputs: Array<{ data: Uint8Array; mime: string; voiceId?: string }> = []
+    for (const preview of previews) {
+      const encoded = preview.audio_base_64?.trim() ?? ''
+      if (encoded === '') continue
+      const data = new Uint8Array(Buffer.from(encoded, 'base64'))
+      outputs.push({
+        data,
+        mime: preview.media_type ?? 'audio/mpeg',
+        ...(preview.generated_voice_id === undefined || preview.generated_voice_id === '' ? {} : { voiceId: preview.generated_voice_id }),
+      })
+    }
+    if (outputs.length === 0) throw new AudioGenError('ElevenLabs voice design returned no audio', 'audio-empty-result')
+    return outputs
+  }
+
   // ------------- ElevenLabs Music（POST /v1/music） -------------
   // 模型：music_v1 / music_v2；prompt 与 composition_plan 二选一（引擎用 prompt）。
   if (request.mode === 'music') {
@@ -654,8 +695,8 @@ export async function generateAudio(
   if (channel.apiUrl.trim() === '') throw new AudioGenError('channel API URL is not configured', 'audio-no-endpoint')
   if (channel.apiKey.trim() === '') throw new AudioGenError('channel API key is not configured', 'audio-no-key')
   if (request.prompt.trim() === '') throw new AudioGenError('audio prompt/text is required', 'audio-empty-prompt')
-  if (request.mode === 'voice_design' && !isMiniMax(channel)) {
-    throw new AudioGenError('音色设计当前仅支持 MiniMax 渠道', 'voice-design-unsupported')
+  if (request.mode === 'voice_design' && !isMiniMax(channel) && !isElevenLabs(channel)) {
+    throw new AudioGenError('音色设计当前仅支持 MiniMax（/v1/voice_design）与 ElevenLabs（/v1/text-to-voice/design）渠道', 'voice-design-unsupported')
   }
 
   if (isElevenLabs(channel)) return elevenLabs(channel, request, signal)

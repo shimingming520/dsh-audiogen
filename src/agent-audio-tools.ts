@@ -100,7 +100,7 @@ function ensureConfigured(config: AgentAudioToolConfig): void {
 export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioToolConfig): () => void {
   const disposer = ctx.tools.register(defineTool({
     name: 'generate_audio',
-    description: 'Generate audio with the configured audio provider. Supports text-to-speech, music generation, sound effects and MiniMax voice design. The tool call waits for the upstream result and returns same-origin audio URLs; pass those URLs to the user for playback or download. If multiple models are configured, first ask the user which one to use or pass model explicitly.',
+    description: 'Generate audio with the configured audio provider. Supports text-to-speech, music generation, sound effects and voice design (MiniMax /v1/voice_design, ElevenLabs /v1/text-to-voice/design). The tool call waits for the upstream result and returns same-origin audio URLs; pass those URLs to the user for playback or download. If multiple models are configured, first ask the user which one to use or pass model explicitly.',
     parameters: {
       prompt: { type: 'string', required: true, description: 'For tts, the text to speak. For music/sfx, a descriptive prompt.' },
       mode: { type: 'string', enum: ['tts', 'music', 'sfx', 'voice_design'], description: 'Generation mode. Defaults to tts.' },

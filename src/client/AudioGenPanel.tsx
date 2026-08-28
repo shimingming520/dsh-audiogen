@@ -79,11 +79,20 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
   const [error, setError] = useState<string | null>(null)
   const [outputs, setOutputs] = useState<GeneratedAudio[]>([])
   const { entries, reload, clear } = useHistory()
+  // 音色设计模式的厂商/渠道选择（默认渠道）
+  const [designChannelId, setDesignChannelId] = useState('')
 
   const isMiniMaxChannel = useMemo(() => {
     const target = channels.find(candidate => candidate.id === modelOptions.defaultChannelId) ?? channels[0]
     return target !== undefined && (target.preset === 'minimax' || /minimax/i.test(target.apiUrl))
   }, [channels, modelOptions.defaultChannelId])
+
+  useEffect(() => {
+    if (channels.length === 0) return
+    if (designChannelId === '' || !channels.some(candidate => candidate.id === designChannelId)) {
+      setDesignChannelId(modelOptions.defaultChannelId ?? channels[0]!.id)
+    }
+  }, [channels, modelOptions.defaultChannelId, designChannelId])
 
   const visibleModels = useMemo(() => {
     if (mode === 'voice_design') return []
@@ -108,8 +117,9 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
     try {
       const response = await api.generate({
         mode,
-        model: (model || visibleModels[0]) ?? '',
+        model: mode === 'voice_design' ? '' : (model || visibleModels[0]) ?? '',
         prompt: prompt.trim(),
+        ...(mode === 'voice_design' && designChannelId !== '' ? { channelId: designChannelId } : {}),
         ...(previewText.trim() !== '' ? { previewText: previewText.trim() } : {}),
         ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
         ...(speed.trim() !== '' ? { speed: Number(speed) } : {}),
@@ -178,10 +188,24 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
           </label>
 
           {mode === 'voice_design' ? (
-            <label className={css.label}>
-              <span>试听文本</span>
-              <input className={css.input} value={previewText} onChange={event => setPreviewText(event.target.value)} placeholder="你好，这是新设计的音色试听。" />
-            </label>
+            <>
+              <label className={css.label}>
+                <span>厂商 / 渠道</span>
+                <select className={css.select} value={designChannelId} onChange={event => setDesignChannelId(event.target.value)}>
+                  {channels.length === 0 ? <option value="">（尚未配置渠道）</option> : null}
+                  {channels.map(candidate => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.name}（{candidate.preset === 'minimax' ? 'MiniMax' : candidate.preset === 'elevenlabs' ? 'ElevenLabs' : candidate.preset || '自定义'}）
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className={css.hint}>MiniMax：/v1/voice_design；ElevenLabs：/v1/text-to-voice/design（试听文本 100-1000 字符，过短将自动生成）</p>
+              <label className={css.label}>
+                <span>试听文本</span>
+                <input className={css.input} value={previewText} onChange={event => setPreviewText(event.target.value)} placeholder="你好，这是新设计的音色试听。" />
+              </label>
+            </>
           ) : null}
 
           {needModel ? (

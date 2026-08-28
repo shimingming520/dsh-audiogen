@@ -182,11 +182,15 @@ function resolveChannelRequest(
   const defaults = view.channels.find(candidate => candidate.id === view.defaultChannelId) ?? view.channels[0]
   const target = explicit ?? defaults
   const asked = request.model.trim()
+
+  // 音色设计不按模型解析渠道：总是走 channelId（面板选择器）或默认渠道，
+  // 并丢弃可能残留的模型值，避免上一个模式的模型把渠道带偏。
+  if (request.mode === 'voice_design') {
+    if (target === undefined) return { ok: false, code: 'no-channels', message: '尚未配置任何渠道' }
+    return { ok: true, request: { ...request, model: '', upstream: undefined, channelId: target.id, channel: target.name } }
+  }
+
   if (asked === '') {
-    if (request.mode === 'voice_design') {
-      if (target === undefined) return { ok: false, code: 'no-channels', message: '尚未配置任何渠道' }
-      return { ok: true, request: { ...request, channelId: target.id, channel: target.name } }
-    }
     const alias = target?.models[0]?.alias ?? ''
     if (alias === '') {
       return { ok: false, code: 'no-models', message: `渠道「${target?.name ?? ''}」尚未配置模型/音色，请先在设置中添加` }
