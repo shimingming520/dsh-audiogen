@@ -1063,3 +1063,62 @@
   display: flex;
   gap: 6px;
 }
+
+/* 历史记录分类 */
+.historyTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.historyTab {
+  border: 1px solid var(--dsw-alias-border-l2, #d1d5db);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--dsw-alias-bg-layer-3, #fff);
+  color: var(--dsw-alias-label-secondary, #6b7280);
+}
+
+.historyTab[data-active='true'] {
+  background: var(--dsw-alias-bg-hover, #f3f4f6);
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-weight: 600;
+}
+
+.historyTabCount {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+}
+
+/* 对比任务卡 */
+.historyCompareSummary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+
+.historyCompareBadge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #7c3aed;
+  border: 1px solid #ddd6fe;
+  border-radius: 999px;
+  padding: 1px 8px;
+  background: #f5f3ff;
+  white-space: nowrap;
+}
+
+.historyModelRow {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--dsw-alias-border-l1, #e5e7eb);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

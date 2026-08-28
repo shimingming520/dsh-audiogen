@@ -100,6 +100,21 @@ function overrideSpread(override: Record<string, string>): Partial<GenerateAudio
   return out
 }
 
+/** 历史记录分组 tab（全部 + 按模式）。 */
+type HistoryTab = 'all' | AudioMode
+
+function taskIdOf(entry: HistoryEntry): string {
+  const params = entry.params as Record<string, unknown> | undefined
+  return typeof params?.taskId === 'string' && params.taskId !== '' ? params.taskId : ''
+}
+
+function modeLabelOf(mode: AudioMode): string {
+  if (mode === 'tts') return tt('mode.tts')
+  if (mode === 'music') return tt('mode.music')
+  if (mode === 'sfx') return tt('mode.sfx')
+  return tt('mode.voiceDesign')
+}
+
 function useConfig(scope: AudiogenScope) {
   const [value, setValue] = useState(scope.getSnapshot().value)
   useEffect(() => scope.subscribe(() => { setValue(scope.getSnapshot().value) }), [scope])
@@ -231,6 +246,8 @@ export function StudioView(props: {
   const [saveToLibrary, setSaveToLibrary] = useState(cfg?.autoSaveToLibrary === true)
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
   const [saveDialog, setSaveDialog] = useState<SaveDialogState | null>(null)
+  // 历史记录分类 tab
+  const [historyTab, setHistoryTab] = useState<HistoryTab>('all')
   // 模型对比
   const [compareMode, setCompareMode] = useState(false)
   const [compareModels, setCompareModels] = useState<string[]>([])
@@ -513,6 +530,58 @@ export function StudioView(props: {
     if (mode === 'sfx') return tt('mode.sfx')
     return tt('mode.voiceDesign')
   }, [mode])
+
+  /** 历史记录：按 taskId 聚合出「单条 / 对比任务卡」两种条目。 */
+  const historyItems = useMemo((): Array<{
+    key: string
+    kind: 'single' | 'compare'
+    mode: AudioMode
+    prompt: string
+    createdAt: number
+    entry: HistoryEntry
+    models: Array<{ model: string; channel?: string; entry: HistoryEntry }>
+  }> => {
+    const taskCounts = new Map<string, number>()
+    for (const entry of entries) {
+      const taskId = taskIdOf(entry)
+      if (taskId !== '') taskCounts.set(taskId, (taskCounts.get(taskId) ?? 0) + 1)
+    }
+    const merged: Array<{
+      key: string
+      kind: 'single' | 'compare'
+      mode: AudioMode
+      prompt: string
+      createdAt: number
+      entry: HistoryEntry
+      models: Array<{ model: string; channel?: string; entry: HistoryEntry }>
+    }> = []
+    const byTask = new Map<string, typeof merged[number]>()
+    for (const entry of entries) {
+      const taskId = taskIdOf(entry)
+      if (taskId !== '' && (taskCounts.get(taskId) ?? 0) > 1) {
+        const existing = byTask.get(taskId)
+        if (existing !== undefined) {
+          existing.models.push({ model: entry.model, ...(entry.channel === undefined ? {} : { channel: entry.channel }), entry })
+          if (entry.createdAt > existing.createdAt) existing.createdAt = entry.createdAt
+          continue
+        }
+        const item: typeof merged[number] = {
+          key: taskId,
+          kind: 'compare',
+          mode: entry.mode,
+          prompt: entry.prompt,
+          createdAt: entry.createdAt,
+          entry,
+          models: [{ model: entry.model, ...(entry.channel === undefined ? {} : { channel: entry.channel }), entry }],
+        }
+        byTask.set(taskId, item)
+        merged.push(item)
+        continue
+      }
+      merged.push({ key: entry.id, kind: 'single', mode: entry.mode, prompt: entry.prompt, createdAt: entry.createdAt, entry, models: [] })
+    }
+    return merged.sort((left, right) => right.createdAt - left.createdAt)
+  }, [entries])
 
   const needModel = mode !== 'voice_design'
   const runningCount = tasks.filter(task => task.status === 'running').length
@@ -863,22 +932,69 @@ export function StudioView(props: {
           <button type="button" className={css.historyClear} onClick={clear}>清空</button>
         </div>
         {entries.length === 0 ? <p className={css.historyEmpty}>{tt('history.empty')}</p> : (
-          <div className={css.historyList}>
-            {entries.map(entry => (
-              <div className={css.historyItem} key={entry.id}>
-                <div className={css.historyPrompt}>{entry.prompt}</div>
-                <div className={css.historyMeta}>{entry.mode} · {entry.model}{entry.channel ? ` · ${entry.channel}` : ''}</div>
-                {entry.audio.map((audio, index) => (
-                  <AudioPlayer key={index} src={audio.url} compact itemKey={`${entry.id}-${index}`} />
-                ))}
-                <div className={css.historyActions}>
-                  <button type="button" className={css.historyAction} onClick={() => openSaveDialog(audioRefsOfEntry(entry), contextOfEntry(entry))}>
-                    <StarIcon /> 入库
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+          <>
+            <div className={css.historyTabs}>
+              {(['all', 'tts', 'music', 'sfx', 'voice_design'] as const).map(tab => (
+                <button
+                  key={tab}
+                  type="button"
+                  className={css.historyTab}
+                  data-active={historyTab === tab ? 'true' : 'false'}
+                  onClick={() => setHistoryTab(tab)}
+                >
+                  {tab === 'all' ? '全部' : modeLabelOf(tab)}
+                  <span className={css.historyTabCount}>
+                    {tab === 'all' ? entries.length : historyItems.filter(item => item.mode === tab).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className={css.historyList}>
+              {(historyTab === 'all' ? historyItems : historyItems.filter(item => item.mode === historyTab)).map(item => {
+                if (item.kind === 'compare') {
+                  return (
+                    <details className={css.historyItem} key={item.key} open>
+                      <summary className={css.historyCompareSummary}>
+                        <span className={css.historyPrompt}>{item.prompt}</span>
+                        <span className={css.historyCompareBadge}>对比 · {item.models.length} 个模型</span>
+                      </summary>
+                      <div className={css.historyMeta}>{modeLabelOf(item.mode)} · {item.models.map(model => model.model).join(' / ')}</div>
+                      {item.models.map(model => (
+                        <div key={model.entry.id} className={css.historyModelRow}>
+                          <div className={css.historyMeta}>
+                            <strong>{model.model}</strong>{model.channel !== undefined ? ` · ${model.channel}` : ''}
+                          </div>
+                          {model.entry.audio.map((audio, index) => (
+                            <AudioPlayer key={index} src={audio.url} compact itemKey={`${item.key}-${model.entry.id}-${index}`} />
+                          ))}
+                          <div className={css.historyActions}>
+                            <button type="button" className={css.historyAction} onClick={() => openSaveDialog(audioRefsOfEntry(model.entry), contextOfEntry(model.entry))}>
+                              <StarIcon /> 入库
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </details>
+                  )
+                }
+                const entry = item.entry
+                return (
+                  <div className={css.historyItem} key={item.key}>
+                    <div className={css.historyPrompt}>{entry.prompt}</div>
+                    <div className={css.historyMeta}>{modeLabelOf(entry.mode)} · {entry.model}{entry.channel ? ` · ${entry.channel}` : ''}</div>
+                    {entry.audio.map((audio, index) => (
+                      <AudioPlayer key={index} src={audio.url} compact itemKey={`${entry.id}-${index}`} />
+                    ))}
+                    <div className={css.historyActions}>
+                      <button type="button" className={css.historyAction} onClick={() => openSaveDialog(audioRefsOfEntry(entry), contextOfEntry(entry))}>
+                        <StarIcon /> 入库
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
         )}
       </aside>
 
