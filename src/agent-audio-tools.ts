@@ -105,11 +105,49 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       prompt: { type: 'string', required: true, description: 'For tts, the text to speak. For music/sfx, a descriptive prompt.' },
       mode: { type: 'string', enum: ['tts', 'music', 'sfx', 'voice_design'], description: 'Generation mode. Defaults to tts.' },
       model: { type: 'string', description: 'One of the configured audio models/voices. Defaults to the first configured model.' },
-      voice: { type: 'string', description: 'Optional voice id/name for TTS providers.' },
+      voice: { type: 'string', description: 'Optional voice id/name for TTS providers. Required for MiniMax TTS (e.g. male-qn-qingse, female-shaonv); fetch the account voices in Settings > Plugins > AI Audio.' },
       preview_text: { type: 'string', description: 'Optional preview text for voice_design.' },
-      speed: { type: 'number', description: 'Optional speaking rate / speed multiplier where supported.' },
+      speed: { type: 'number', description: 'Optional speaking rate / speed multiplier where supported. MiniMax range 0.5-2.0 (default 1).' },
       duration: { type: 'number', description: 'Requested duration in seconds for music/sfx.' },
       format: { type: 'string', description: 'Output format such as mp3 or wav.' },
+      // ---- MiniMax TTS only (ignored by other providers) ----
+      emotion: { type: 'string', description: 'MiniMax TTS emotion, e.g. happy/sad/angry/nervous/fearful/bored (voice_setting.emotion).' },
+      vol: { type: 'number', description: 'MiniMax TTS volume 0-10, default 1 (voice_setting.vol).' },
+      pitch: { type: 'integer', description: 'MiniMax TTS pitch shift -12..12 semitones, default 0 (voice_setting.pitch).' },
+      text_normalization: { type: 'boolean', description: 'MiniMax TTS text normalization switch (voice_setting.text_normalization).' },
+      latex_read: { type: 'boolean', description: 'MiniMax TTS math formula reading switch (voice_setting.latex_read).' },
+      pronunciation_tone: { type: 'array', items: { type: 'string' }, description: 'MiniMax TTS pronunciation dictionary tone entries, each "word/pronunciation", e.g. ["处理/(chu3)(li3)", "危险/dangerous"] (pronunciation_dict.tone).' },
+      sample_rate: { type: 'integer', description: 'MiniMax TTS sample rate: 16000/24000/32000/44100/48000, default 32000 (audio_setting.sample_rate).' },
+      bitrate: { type: 'integer', description: 'MiniMax TTS bitrate in bps: 64000-320000, default 128000 (audio_setting.bitrate).' },
+      channel: { type: 'integer', description: 'MiniMax TTS audio channels: 1 or 2, default 1 (audio_setting.channel).' },
+      force_cbr: { type: 'boolean', description: 'MiniMax TTS force CBR encoding (audio_setting.force_cbr).' },
+      subtitle_enable: { type: 'boolean', description: 'MiniMax TTS subtitle output switch (subtitle_enable).' },
+      aigc_watermark: { type: 'boolean', description: 'MiniMax TTS AIGC watermark switch (aigc_watermark).' },
+      language_boost: { type: 'string', description: 'MiniMax TTS language boost, e.g. 中英混读 (language_boost, model-dependent).' },
+      voice_modify: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          pitch: { type: 'integer', description: 'Pitch shift for voice modification.' },
+          intensity: { type: 'integer', description: 'Intensity for voice modification.' },
+          timbre: { type: 'integer', description: 'Timbre shift for voice modification.' },
+          sound_effects: { type: 'string', description: 'Sound effect for voice modification, e.g. 耳语.' },
+        },
+        description: 'MiniMax TTS voice modification (voice_modify, supported by speech-2.8+).',
+      },
+      timbre_weights: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            voice_id: { type: 'string' },
+            weight: { type: 'integer' },
+          },
+          required: ['voice_id', 'weight'],
+        },
+        description: 'MiniMax TTS dual-voice blend weights (timbre_weights).',
+      },
     },
     output: {
       schema: resultSchema,
@@ -129,6 +167,23 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
           return { channel: target, alias: '', upstream: '' }
         })()
         : resolveModel(config, args.model)
+      const voiceModify = typeof args.voice_modify === 'object' && args.voice_modify !== null
+        ? (() => {
+          const raw = args.voice_modify as Record<string, unknown>
+          const out: { pitch?: number; intensity?: number; timbre?: number; soundEffects?: string } = {}
+          if (typeof raw.pitch === 'number') out.pitch = raw.pitch
+          if (typeof raw.intensity === 'number') out.intensity = raw.intensity
+          if (typeof raw.timbre === 'number') out.timbre = raw.timbre
+          if (typeof raw.sound_effects === 'string' && raw.sound_effects.trim() !== '') out.soundEffects = raw.sound_effects.trim()
+          return Object.keys(out).length > 0 ? out : undefined
+        })()
+        : undefined
+      const timbreWeights = Array.isArray(args.timbre_weights)
+        ? args.timbre_weights
+          .filter((item): item is { voice_id: string; weight: number } => typeof item === 'object' && item !== null && typeof (item as { voice_id?: unknown }).voice_id === 'string' && typeof (item as { weight?: unknown }).weight === 'number')
+          .map(item => ({ voiceId: (item.voice_id as string).trim(), weight: item.weight as number }))
+          .filter(item => item.voiceId !== '')
+        : undefined
       const request: GenerateAudioRequest = {
         mode,
         model: picked.alias,
@@ -141,6 +196,24 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
         ...(typeof args.speed === 'number' ? { speed: args.speed } : {}),
         ...(typeof args.duration === 'number' ? { duration: args.duration } : {}),
         ...(typeof args.format === 'string' && args.format.trim() !== '' ? { format: args.format.trim() } : {}),
+        // ---- MiniMax TTS 专属字段 ----
+        ...(typeof args.emotion === 'string' && args.emotion.trim() !== '' ? { emotion: args.emotion.trim() } : {}),
+        ...(typeof args.vol === 'number' && Number.isFinite(args.vol) ? { vol: args.vol } : {}),
+        ...(typeof args.pitch === 'number' && Number.isFinite(args.pitch) ? { pitch: args.pitch } : {}),
+        ...(typeof args.text_normalization === 'boolean' ? { textNormalization: args.text_normalization } : {}),
+        ...(typeof args.latex_read === 'boolean' ? { latexRead: args.latex_read } : {}),
+        ...(Array.isArray(args.pronunciation_tone) && args.pronunciation_tone.length > 0
+          ? { pronunciationTone: args.pronunciation_tone.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map((item: string) => item.trim()) }
+          : {}),
+        ...(typeof args.sample_rate === 'number' && Number.isFinite(args.sample_rate) ? { sampleRate: args.sample_rate } : {}),
+        ...(typeof args.bitrate === 'number' && Number.isFinite(args.bitrate) ? { bitrate: args.bitrate } : {}),
+        ...(typeof args.channel === 'number' && Number.isFinite(args.channel) ? { audioChannel: args.channel } : {}),
+        ...(typeof args.force_cbr === 'boolean' ? { forceCbr: args.force_cbr } : {}),
+        ...(typeof args.subtitle_enable === 'boolean' ? { subtitleEnable: args.subtitle_enable } : {}),
+        ...(typeof args.aigc_watermark === 'boolean' ? { aigcWatermark: args.aigc_watermark } : {}),
+        ...(typeof args.language_boost === 'string' && args.language_boost.trim() !== '' ? { languageBoost: args.language_boost.trim() } : {}),
+        ...(voiceModify !== undefined ? { voiceModify } : {}),
+        ...(timbreWeights !== undefined && timbreWeights.length > 0 ? { timbreWeights } : {}),
       }
       try {
         const outputs = await generateAudio(picked.channel, request, exec.signal)

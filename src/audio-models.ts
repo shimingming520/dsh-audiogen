@@ -50,51 +50,62 @@ export async function discoverAudioModels(channel: AudioChannel): Promise<{ mode
   if (isMiniMax(channel)) {
     const base = baseUrl(channel.apiUrl).replace(/\/v1$/i, '')
     const url = `${base}/v1/get_voice`
-    const payload = await postJson(url, channel.apiKey, { voice_type: 'all' }) as {
-      system_voice?: Array<{ voice_id?: string; voice_name?: string; description?: string[] }>
-      voice_cloning?: Array<{ voice_id?: string; description?: string[] }>
-      voice_generation?: Array<{ voice_id?: string; description?: string[] }>
-      base_resp?: { status_code?: number; status_msg?: string }
+    try {
+      const payload = await postJson(url, channel.apiKey, { voice_type: 'all' }) as {
+        system_voice?: Array<{ voice_id?: string; voice_name?: string; description?: string[] }>
+        voice_cloning?: Array<{ voice_id?: string; description?: string[] }>
+        voice_generation?: Array<{ voice_id?: string; description?: string[] }>
+        base_resp?: { status_code?: number; status_msg?: string }
+      }
+      if (payload.base_resp?.status_code !== undefined && payload.base_resp.status_code !== 0) {
+        throw new Error(payload.base_resp.status_msg ?? `MiniMax returned status ${payload.base_resp.status_code}`)
+      }
+      const models: DiscoveredAudioModel[] = []
+      for (const voice of payload.system_voice ?? []) {
+        const id = voice.voice_id?.trim() ?? ''
+        if (id === '') continue
+        models.push({
+          alias: voice.voice_name?.trim() || id,
+          id,
+          category: 'tts',
+          ...(voice.description !== undefined && voice.description.length > 0 ? { description: voice.description.join('；') } : {}),
+        })
+      }
+      for (const voice of payload.voice_cloning ?? []) {
+        const id = voice.voice_id?.trim() ?? ''
+        if (id === '') continue
+        models.push({
+          alias: id,
+          id,
+          category: 'tts',
+          ...(voice.description !== undefined && voice.description.length > 0 ? { description: voice.description.join('；') } : {}),
+        })
+      }
+      for (const voice of payload.voice_generation ?? []) {
+        const id = voice.voice_id?.trim() ?? ''
+        if (id === '') continue
+        models.push({
+          alias: id,
+          id,
+          category: 'tts',
+          ...(voice.description !== undefined && voice.description.length > 0 ? { description: voice.description.join('；') } : {}),
+        })
+      }
+      // MiniMax music models are not returned by get_voice; append the static catalog.
+      const music = (audioPresetById('minimax')?.models ?? []).filter(model => model.category === 'music')
+      for (const model of music) models.push({ ...model, category: 'music' as const })
+      const deduped = dedupe(models)
+      return { models: deduped, source: 'MiniMax get_voice + built-in music catalog' }
+    } catch (error) {
+      // Gateways may not route /v1/get_voice (or lack voice-management access).
+      // Fall back to the built-in catalog so generation still works.
+      const fallback = (audioPresetById('minimax')?.models ?? []).map(model => ({ ...model }))
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        models: dedupe(fallback),
+        source: `内置 MiniMax 目录（音色发现失败：${message.slice(0, 160)}）`,
+      }
     }
-    if (payload.base_resp?.status_code !== undefined && payload.base_resp.status_code !== 0) {
-      throw new Error(payload.base_resp.status_msg ?? `MiniMax returned status ${payload.base_resp.status_code}`)
-    }
-    const models: DiscoveredAudioModel[] = []
-    for (const voice of payload.system_voice ?? []) {
-      const id = voice.voice_id?.trim() ?? ''
-      if (id === '') continue
-      models.push({
-        alias: voice.voice_name?.trim() || id,
-        id,
-        category: 'tts',
-        ...(voice.description !== undefined && voice.description.length > 0 ? { description: voice.description.join('；') } : {}),
-      })
-    }
-    for (const voice of payload.voice_cloning ?? []) {
-      const id = voice.voice_id?.trim() ?? ''
-      if (id === '') continue
-      models.push({
-        alias: id,
-        id,
-        category: 'tts',
-        ...(voice.description !== undefined && voice.description.length > 0 ? { description: voice.description.join('；') } : {}),
-      })
-    }
-    for (const voice of payload.voice_generation ?? []) {
-      const id = voice.voice_id?.trim() ?? ''
-      if (id === '') continue
-      models.push({
-        alias: id,
-        id,
-        category: 'tts',
-        ...(voice.description !== undefined && voice.description.length > 0 ? { description: voice.description.join('；') } : {}),
-      })
-    }
-    // MiniMax music models are not returned by get_voice; append the static catalog.
-    const music = (audioPresetById('minimax')?.models ?? []).filter(model => model.category === 'music')
-    for (const model of music) models.push({ ...model, category: 'music' as const })
-    const deduped = dedupe(models)
-    return { models: deduped, source: 'MiniMax get_voice + built-in music catalog' }
   }
 
   // Best-effort OpenAI-compatible /models discovery.

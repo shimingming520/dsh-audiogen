@@ -61,10 +61,24 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
   const [speed, setSpeed] = useState('')
   const [duration, setDuration] = useState('')
   const [format, setFormat] = useState('mp3')
+  // MiniMax TTS 高级参数（其他厂商忽略）
+  const [emotion, setEmotion] = useState('')
+  const [vol, setVol] = useState('')
+  const [pitch, setPitch] = useState('')
+  const [toneText, setToneText] = useState('')
+  const [sampleRate, setSampleRate] = useState('')
+  const [bitrate, setBitrate] = useState('')
+  const [audioChannel, setAudioChannel] = useState('')
+  const [subtitle, setSubtitle] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [outputs, setOutputs] = useState<GeneratedAudio[]>([])
   const { entries, reload, clear } = useHistory()
+
+  const isMiniMaxChannel = useMemo(() => {
+    const target = channels.find(candidate => candidate.id === modelOptions.defaultChannelId) ?? channels[0]
+    return target !== undefined && (target.preset === 'minimax' || /minimax/i.test(target.apiUrl))
+  }, [channels, modelOptions.defaultChannelId])
 
   const visibleModels = useMemo(() => {
     if (mode === 'voice_design') return []
@@ -96,6 +110,14 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
         ...(speed.trim() !== '' ? { speed: Number(speed) } : {}),
         ...(duration.trim() !== '' ? { duration: Number(duration) } : {}),
         ...(format.trim() !== '' ? { format: format.trim() } : {}),
+        ...(emotion.trim() !== '' ? { emotion: emotion.trim() } : {}),
+        ...(vol.trim() !== '' ? { vol: Number(vol) } : {}),
+        ...(pitch.trim() !== '' ? { pitch: Number(pitch) } : {}),
+        ...(toneText.trim() !== '' ? { pronunciationTone: toneText.split('\n').map(item => item.trim()).filter(item => item !== '') } : {}),
+        ...(sampleRate.trim() !== '' ? { sampleRate: Number(sampleRate) } : {}),
+        ...(bitrate.trim() !== '' ? { bitrate: Number(bitrate) } : {}),
+        ...(audioChannel.trim() !== '' ? { audioChannel: Number(audioChannel) } : {}),
+        ...(subtitle ? { subtitleEnable: true } : {}),
       })
       if (!response.ok) {
         setError(response.message ?? '生成失败')
@@ -166,7 +188,7 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
           {mode === 'tts' ? (
             <label className={css.label}>
               <span>{tt('voice.label')}</span>
-              <input className={css.input} value={voice} onChange={event => setVoice(event.target.value)} placeholder="alloy / 自定义音色" />
+              <input className={css.input} value={voice} onChange={event => setVoice(event.target.value)} placeholder={isMiniMaxChannel ? 'male-qn-qingse / female-shaonv' : 'alloy / 自定义音色'} />
             </label>
           ) : null}
 
@@ -175,6 +197,52 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
               <span>{tt('speed.label')}</span>
               <input className={css.input} type="number" step="0.1" min="0.5" max="2" value={speed} onChange={event => setSpeed(event.target.value)} placeholder="1.0" />
             </label>
+          ) : null}
+
+          {mode === 'tts' && isMiniMaxChannel ? (
+            <details className={css.advanced}>
+              <summary>MiniMax 高级参数</summary>
+              <label className={css.label}>
+                <span>情绪 emotion</span>
+                <input className={css.input} value={emotion} onChange={event => setEmotion(event.target.value)} placeholder="happy / sad / angry / nervous…" />
+              </label>
+              <div className={css.row}>
+                <label className={css.label}>
+                  <span>音量 vol (0-10)</span>
+                  <input className={css.input} type="number" min="0" max="10" step="0.5" value={vol} onChange={event => setVol(event.target.value)} placeholder="1" />
+                </label>
+                <label className={css.label}>
+                  <span>音调 pitch (-12~12)</span>
+                  <input className={css.input} type="number" min="-12" max="12" value={pitch} onChange={event => setPitch(event.target.value)} placeholder="0" />
+                </label>
+              </div>
+              <div className={css.row}>
+                <label className={css.label}>
+                  <span>采样率</span>
+                  <input className={css.input} type="number" min="16000" max="48000" step="8000" value={sampleRate} onChange={event => setSampleRate(event.target.value)} placeholder="32000" />
+                </label>
+                <label className={css.label}>
+                  <span>码率 bps</span>
+                  <input className={css.input} type="number" min="64000" max="320000" step="8000" value={bitrate} onChange={event => setBitrate(event.target.value)} placeholder="128000" />
+                </label>
+                <label className={css.label}>
+                  <span>声道</span>
+                  <select className={css.select} value={audioChannel} onChange={event => setAudioChannel(event.target.value)}>
+                    <option value="">默认(1)</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                  </select>
+                </label>
+              </div>
+              <label className={css.label}>
+                <span>发音词典（每行一条："文字/读音"）</span>
+                <textarea className={css.textarea} value={toneText} onChange={event => setToneText(event.target.value)} placeholder={'处理/(chu3)(li3)\n危险/dangerous'} />
+              </label>
+              <label className={css.checkbox}>
+                <input type="checkbox" checked={subtitle} onChange={event => setSubtitle(event.target.checked)} />
+                <span>生成字幕 subtitle_enable</span>
+              </label>
+            </details>
           ) : null}
 
           {mode === 'music' || mode === 'sfx' ? (

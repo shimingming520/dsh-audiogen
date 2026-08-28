@@ -274,10 +274,127 @@ function minimaxApiBase(base: string): string {
   return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`
 }
 
+/**
+ * Resolve the MiniMax voice_id for a TTS request.
+ * Priority: explicit voice param → upstream id (if it is not a model name) →
+ * model alias (if it is not a model name). MiniMax speech/music model ids
+ * (speech-2.8-hd, music-3.0, …) are never treated as voice ids.
+ */
+function resolveMiniMaxVoice(request: GenerateAudioRequest): string | undefined {
+  const explicit = request.voice?.trim()
+  if (explicit !== undefined && explicit !== '') return explicit
+  for (const candidate of [request.upstream, request.model]) {
+    const value = typeof candidate === 'string' ? candidate.trim() : ''
+    if (value === '') continue
+    if (/^(speech|music|t2a|tts)[-_]/i.test(value)) continue
+    return value
+  }
+  return undefined
+}
+
+/**
+ * Build the full MiniMax t2a_v2 body. Every official field is carried
+ * through — voice_setting (voice_id/speed/vol/pitch/emotion/text_normalization/
+ * latex_read), pronunciation_dict.tone, audio_setting (format/sample_rate/
+ * bitrate/channel/force_cbr), subtitle_enable, aigc_watermark, language_boost,
+ * voice_modify and timbre_weights — so callers and skills can reference them.
+ */
+function buildMiniMaxTTSBody(request: GenerateAudioRequest, model: string, voiceId: string): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model,
+    text: request.prompt,
+    stream: false,
+    voice_setting: {
+      voice_id: voiceId,
+      speed: request.speed ?? 1,
+      vol: request.vol ?? 1,
+      pitch: request.pitch ?? 0,
+      ...(request.emotion !== undefined && request.emotion.trim() !== '' ? { emotion: request.emotion.trim() } : {}),
+      ...(request.textNormalization !== undefined ? { text_normalization: request.textNormalization } : {}),
+      ...(request.latexRead !== undefined ? { latex_read: request.latexRead } : {}),
+    },
+    audio_setting: {
+      format: request.format ?? 'mp3',
+      sample_rate: request.sampleRate ?? 32000,
+      bitrate: request.bitrate ?? 128000,
+      channel: request.audioChannel ?? 1,
+      ...(request.forceCbr !== undefined ? { force_cbr: request.forceCbr } : {}),
+    },
+  }
+  if (request.pronunciationTone !== undefined && request.pronunciationTone.length > 0) {
+    body.pronunciation_dict = { tone: request.pronunciationTone }
+  }
+  if (request.subtitleEnable !== undefined) body.subtitle_enable = request.subtitleEnable
+  if (request.aigcWatermark !== undefined) body.aigc_watermark = request.aigcWatermark
+  if (request.languageBoost !== undefined && request.languageBoost.trim() !== '') {
+    body.language_boost = request.languageBoost.trim()
+  }
+  if (request.voiceModify !== undefined) {
+    const modify: Record<string, unknown> = {}
+    if (request.voiceModify.pitch !== undefined) modify.pitch = request.voiceModify.pitch
+    if (request.voiceModify.intensity !== undefined) modify.intensity = request.voiceModify.intensity
+    if (request.voiceModify.timbre !== undefined) modify.timbre = request.voiceModify.timbre
+    if (request.voiceModify.soundEffects !== undefined && request.voiceModify.soundEffects.trim() !== '') {
+      modify.sound_effects = request.voiceModify.soundEffects.trim()
+    }
+    if (Object.keys(modify).length > 0) body.voice_modify = modify
+  }
+  if (request.timbreWeights !== undefined && request.timbreWeights.length > 0) {
+    body.timbre_weights = request.timbreWeights
+      .filter(item => typeof item?.voiceId === 'string' && item.voiceId.trim() !== '' && typeof item.weight === 'number')
+      .map(item => ({ voice_id: item.voiceId.trim(), weight: item.weight }))
+  }
+  return body
+}
+
+/** The MiniMax-specific fields only (model/text/stream excluded) — used as the
+ *  new-api `metadata` payload when a gateway serves MiniMax TTS at /v1/audio/speech.
+ *  The merge keeps the gateway-sent model/input, and voice_setting.voice_id is
+ *  carried explicitly so relays that overwrite it still get the right voice. */
+function buildMiniMaxTTSUpload(request: GenerateAudioRequest, voiceId: string): Record<string, unknown> {
+  const upload = buildMiniMaxTTSBody(request, '', voiceId)
+  delete upload.model
+  delete upload.text
+  delete upload.stream
+  return upload
+}
+
+/**
+ * OpenAI-compatible MiniMax TTS path for New API style gateways that do not
+ * route the native /v1/t2a_v2. The full native field set is carried inside
+ * `metadata`, which new-api's MiniMax TTS relay merges into t2a_v2 upstream.
+ */
+async function minimaxTTSGateway(channel: AudioChannel, request: GenerateAudioRequest, signal: AbortSignal | undefined, voiceId: string): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
+  const base = minimaxApiBase(channel.apiUrl)
+  const endpoint = `${base}/audio/speech`
+  const model = (request.upstream ?? request.model) || 'speech-2.8-hd'
+  const metadata = buildMiniMaxTTSUpload(request, voiceId)
+  const body: Record<string, unknown> = {
+    model,
+    input: request.prompt,
+    voice: voiceId,
+    response_format: request.format ?? 'mp3',
+    ...(request.speed !== undefined ? { speed: request.speed } : {}),
+    ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+  }
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    // Gateways may answer with a redirect to the real audio URL — follow it.
+    redirect: 'follow',
+    headers: {
+      authorization: `Bearer ${channel.apiKey.trim()}`,
+      'content-type': 'application/json',
+      accept: 'application/json, audio/mpeg',
+    },
+    body: JSON.stringify(body),
+    signal,
+  }, UPSTREAM_TIMEOUT_MS)
+  return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+}
+
 async function minimax(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   const base = minimaxApiBase(channel.apiUrl)
   const model = (request.upstream ?? request.model) || (request.mode === 'music' ? 'music-3.0' : 'speech-2.8-hd')
-  const voice = request.voice ?? request.model ?? ''
 
   if (request.mode === 'voice_design') {
     const endpoint = `${base}/voice_design`
@@ -319,11 +436,9 @@ async function minimax(channel: AudioChannel, request: GenerateAudioRequest, sig
     }]
   }
 
-  let endpoint: string
-  let body: Record<string, unknown>
   if (request.mode === 'music') {
-    endpoint = `${base}/music_generation`
-    body = {
+    const endpoint = `${base}/music_generation`
+    const body: Record<string, unknown> = {
       model,
       prompt: request.prompt,
       ...(request.duration !== undefined ? { duration: request.duration } : {}),
@@ -333,26 +448,34 @@ async function minimax(channel: AudioChannel, request: GenerateAudioRequest, sig
         bitrate: 256000,
       },
     }
-  } else {
-    endpoint = `${base}/t2a_v2`
-    body = {
-      model,
-      text: request.prompt,
-      stream: false,
-      ...(voice === '' ? {} : { voice_setting: {
-        voice_id: voice,
-        ...(request.speed !== undefined ? { speed: request.speed } : {}),
-        vol: 1,
-        pitch: 0,
-      } }),
-      audio_setting: {
-        format: request.format ?? 'mp3',
-        sample_rate: 32000,
-        bitrate: 128000,
+    const response = await fetchWithTimeout(endpoint, {
+      method: 'POST',
+      redirect: 'error',
+      headers: {
+        authorization: `Bearer ${channel.apiKey.trim()}`,
+        'content-type': 'application/json',
+        accept: 'application/json, audio/mpeg',
       },
+      body: JSON.stringify(body),
+      signal,
+    }, UPSTREAM_TIMEOUT_MS)
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new AudioGenError(`MiniMax music API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
     }
+    return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
   }
 
+  // ------------------------------------------------------------- TTS
+  const voiceId = resolveMiniMaxVoice(request)
+  if (voiceId === undefined) {
+    throw new AudioGenError(
+      'MiniMax TTS 需要指定音色 voice_id（如 male-qn-qingse、female-shaonv）：请在「音色」字段填写，或把音色加入渠道模型目录（alias 可任意、upstream 填 voice_id），也可点「获取可用模型」拉取账号音色列表。',
+      'voice-required',
+    )
+  }
+  const endpoint = `${base}/t2a_v2`
+  const body = buildMiniMaxTTSBody(request, model, voiceId)
   const response = await fetchWithTimeout(endpoint, {
     method: 'POST',
     redirect: 'error',
@@ -364,7 +487,27 @@ async function minimax(channel: AudioChannel, request: GenerateAudioRequest, sig
     body: JSON.stringify(body),
     signal,
   }, UPSTREAM_TIMEOUT_MS)
-  return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+  if (response.ok) {
+    return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+  }
+  const detail = await response.text().catch(() => '')
+  const routeMiss = response.status === 404 && /invalid url|invalid_request_error/i.test(detail)
+  if (!routeMiss) {
+    throw new AudioGenError(`MiniMax TTS API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
+  }
+  // Gateway does not route the native MiniMax path — retry over its
+  // OpenAI-compatible /v1/audio/speech (new-api MiniMax relays merge
+  // `metadata` back into a full t2a_v2 request).
+  try {
+    return await minimaxTTSGateway(channel, request, signal, voiceId)
+  } catch (gatewayError) {
+    const detailText = gatewayError instanceof AudioGenError ? gatewayError.message : String(gatewayError)
+    throw new AudioGenError(
+      `MiniMax 渠道「${channel.name}」网关未提供原生 TTS 接口：POST ${endpoint} 返回 HTTP 404（Invalid URL，网关未路由 /v1/t2a_v2）；已回退 OpenAI 兼容 ${minimaxApiBase(channel.apiUrl)}/audio/speech 仍失败：${detailText.slice(0, 300)}。`
+      + '请把渠道 API 地址配置为官方 https://api.minimaxi.com（配合 MiniMax 官方密钥），或确认网关已将 /v1/audio/speech 映射到 MiniMax 音色渠道。',
+      'audio-api-error',
+    )
+  }
 }
 
 async function stabilityAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {

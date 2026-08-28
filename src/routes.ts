@@ -93,16 +93,53 @@ function parseGenerateRequest(body: Record<string, unknown>): GenerateAudioReque
   const mode = body.mode === 'music' ? 'music' : body.mode === 'sfx' ? 'sfx' : body.mode === 'voice_design' ? 'voice_design' : 'tts'
   const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
   if (prompt === '') return undefined
+  const num = (value: unknown): number | undefined => typeof value === 'number' && Number.isFinite(value) ? value : undefined
+  const str = (value: unknown): string | undefined => typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+  const flag = (value: unknown): boolean | undefined => typeof value === 'boolean' ? value : undefined
+  const tone = Array.isArray(body.pronunciationTone)
+    ? body.pronunciationTone.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map(item => item.trim())
+    : undefined
+  const voiceModifyRaw = body.voiceModify
+  const voiceModify = typeof voiceModifyRaw === 'object' && voiceModifyRaw !== null
+    ? {
+      ...(num((voiceModifyRaw as Record<string, unknown>).pitch) !== undefined ? { pitch: num((voiceModifyRaw as Record<string, unknown>).pitch)! } : {}),
+      ...(num((voiceModifyRaw as Record<string, unknown>).intensity) !== undefined ? { intensity: num((voiceModifyRaw as Record<string, unknown>).intensity)! } : {}),
+      ...(num((voiceModifyRaw as Record<string, unknown>).timbre) !== undefined ? { timbre: num((voiceModifyRaw as Record<string, unknown>).timbre)! } : {}),
+      ...(str((voiceModifyRaw as Record<string, unknown>).soundEffects) !== undefined ? { soundEffects: str((voiceModifyRaw as Record<string, unknown>).soundEffects)! } : {}),
+    }
+    : undefined
+  const timbreWeights = Array.isArray(body.timbreWeights)
+    ? body.timbreWeights
+      .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).voiceId === 'string' && typeof (item as Record<string, unknown>).weight === 'number')
+      .map(item => ({ voiceId: (item.voiceId as string).trim(), weight: item.weight as number }))
+      .filter(item => item.voiceId !== '')
+    : undefined
   return {
     mode,
     model: typeof body.model === 'string' ? body.model.trim() : '',
     prompt,
     ...(typeof body.voice === 'string' && body.voice.trim() !== '' ? { voice: body.voice.trim() } : {}),
     ...(typeof body.previewText === 'string' && body.previewText.trim() !== '' ? { previewText: body.previewText.trim() } : {}),
-    ...(typeof body.speed === 'number' ? { speed: body.speed } : {}),
-    ...(typeof body.duration === 'number' ? { duration: body.duration } : {}),
+    ...(num(body.speed) !== undefined ? { speed: num(body.speed)! } : {}),
+    ...(num(body.duration) !== undefined ? { duration: num(body.duration)! } : {}),
     ...(typeof body.format === 'string' && body.format.trim() !== '' ? { format: body.format.trim() } : {}),
     ...(typeof body.channelId === 'string' && body.channelId !== '' ? { channelId: body.channelId } : {}),
+    // ---- MiniMax TTS 专属字段（其他厂商忽略） ----
+    ...(str(body.emotion) !== undefined ? { emotion: str(body.emotion)! } : {}),
+    ...(num(body.vol) !== undefined ? { vol: num(body.vol)! } : {}),
+    ...(num(body.pitch) !== undefined ? { pitch: num(body.pitch)! } : {}),
+    ...(flag(body.textNormalization) !== undefined ? { textNormalization: flag(body.textNormalization)! } : {}),
+    ...(flag(body.latexRead) !== undefined ? { latexRead: flag(body.latexRead)! } : {}),
+    ...(tone !== undefined && tone.length > 0 ? { pronunciationTone: tone } : {}),
+    ...(num(body.sampleRate) !== undefined ? { sampleRate: num(body.sampleRate)! } : {}),
+    ...(num(body.bitrate) !== undefined ? { bitrate: num(body.bitrate)! } : {}),
+    ...(num(body.audioChannel) !== undefined ? { audioChannel: num(body.audioChannel)! } : {}),
+    ...(flag(body.forceCbr) !== undefined ? { forceCbr: flag(body.forceCbr)! } : {}),
+    ...(flag(body.subtitleEnable) !== undefined ? { subtitleEnable: flag(body.subtitleEnable)! } : {}),
+    ...(flag(body.aigcWatermark) !== undefined ? { aigcWatermark: flag(body.aigcWatermark)! } : {}),
+    ...(str(body.languageBoost) !== undefined ? { languageBoost: str(body.languageBoost)! } : {}),
+    ...(voiceModify !== undefined ? { voiceModify } : {}),
+    ...(timbreWeights !== undefined && timbreWeights.length > 0 ? { timbreWeights } : {}),
   }
 }
 

@@ -8,7 +8,7 @@
 export const AUDIOGEN_SETTINGS_NAMESPACE = 'dsh-audiogen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '0.3.0'
+export const PLUGIN_VERSION = '0.3.1'
 
 /** Same-origin route family (loopback-only, mirroring dsh-imagegen). */
 export const SETTINGS_API = {
@@ -120,6 +120,38 @@ export interface GenerateAudioRequest {
   channel?: string
   /** Upstream model id actually sent (host-filled from alias mapping). */
   upstream?: string
+
+  // ---- MiniMax TTS 专属字段（其他厂商渠道忽略）——————
+  /** MiniMax 音色情绪，如 happy/sad/angry/nervous/fearful/bored；默认按音色自身。 */
+  emotion?: string
+  /** MiniMax 音量，范围 0-10，默认 1。 */
+  vol?: number
+  /** MiniMax 音调偏移（半音），范围 -12~12，默认 0。 */
+  pitch?: number
+  /** MiniMax 文本归一化处理开关（默认 true）。 */
+  textNormalization?: boolean
+  /** MiniMax 数学公式朗读开关（默认 false）。 */
+  latexRead?: boolean
+  /** MiniMax 发音词典 tone 条目，元素形如 "处理/(chu3)(li3)" 或 "危险/dangerous"。 */
+  pronunciationTone?: string[]
+  /** MiniMax 采样率：16000/24000/32000/44100/48000，默认 32000。 */
+  sampleRate?: number
+  /** MiniMax 码率（bps）：64000-320000，默认 128000。 */
+  bitrate?: number
+  /** MiniMax 声道数：1 或 2，默认 1。 */
+  audioChannel?: number
+  /** MiniMax 强制 CBR 编码（avoid VBR），默认 false。 */
+  forceCbr?: boolean
+  /** MiniMax 字幕开关：true 时响应携带字幕内容/文件。 */
+  subtitleEnable?: boolean
+  /** MiniMax AIGC 水印开关。 */
+  aigcWatermark?: boolean
+  /** MiniMax 语言增强（language_boost），如"中英混读"，按模型支持情况。 */
+  languageBoost?: string
+  /** MiniMax 变声参数（voice_modify，speech-2.8 等支持）。 */
+  voiceModify?: { pitch?: number; intensity?: number; timbre?: number; soundEffects?: string }
+  /** MiniMax 双音色混合权重（timbre_weights）。 */
+  timbreWeights?: Array<{ voiceId: string; weight: number }>
 }
 
 /** One generated audio, normalized host-side to base64. */
