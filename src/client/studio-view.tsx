@@ -11,7 +11,7 @@ import { audioModelOptions } from './settings-scope.ts'
 import { tt } from './helpers.ts'
 import {
   HISTORY_API,
-  type AudioMode, type GeneratedAudio, type HistoryEntry, type LibraryEntry,
+  type AudioMode, type GenerateAudioRequest, type GeneratedAudio, type HistoryEntry, type LibraryEntry,
 } from '../protocol.ts'
 import { AudioPlayer } from './audio-player.tsx'
 import { LibrarySaveDialog, type SaveDialogContext } from './library-save-dialog.tsx'
@@ -24,6 +24,55 @@ export interface StudioReuse {
   voice?: string
   model?: string
   voiceId?: string
+}
+
+/** 每模型可覆盖的参数行（留空 = 自动，沿用上方全局配置）。 */
+const OVERRIDE_ROWS: Array<{ key: string; label: string; type: 'text' | 'number' | 'select'; options?: string[]; placeholder?: string }> = [
+  { key: 'format', label: '输出格式', type: 'select', options: ['mp3', 'wav', 'pcm', 'flac', 'ogg'], placeholder: '自动' },
+  { key: 'duration', label: '时长(秒)', type: 'number', placeholder: '自动' },
+  { key: 'voice', label: '音色', type: 'text', placeholder: '自动' },
+  { key: 'speed', label: '语速', type: 'number', placeholder: '自动' },
+  { key: 'emotion', label: '情绪', type: 'text', placeholder: '自动' },
+  { key: 'sample_rate', label: '采样率', type: 'number', placeholder: '自动' },
+  { key: 'bitrate', label: '码率', type: 'number', placeholder: '自动' },
+  { key: 'lyrics', label: '歌词', type: 'text', placeholder: '自动' },
+  { key: 'seed', label: 'seed', type: 'number', placeholder: '自动' },
+  { key: 'steps', label: 'steps', type: 'number', placeholder: '自动' },
+  { key: 'cfg_scale', label: 'cfg_scale', type: 'number', placeholder: '自动' },
+]
+
+/** 每模型覆盖值 → 请求字段的数值/类型转换（空值跳过）。 */
+function overrideSpread(override: Record<string, string>): Partial<GenerateAudioRequest> {
+  const out: Partial<GenerateAudioRequest> = {}
+  const val = override.format?.trim() ?? ''
+  if (val !== '') out.format = val
+  const num = (key: string): number | undefined => {
+    const raw = (override[key] ?? '').trim()
+    if (raw === '') return undefined
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  const duration = num('duration')
+  if (duration !== undefined) out.duration = duration
+  const voice = override.voice?.trim() ?? ''
+  if (voice !== '') out.voice = voice
+  const speed = num('speed')
+  if (speed !== undefined) out.speed = speed
+  const emotion = override.emotion?.trim() ?? ''
+  if (emotion !== '') out.emotion = emotion
+  const sampleRate = num('sample_rate')
+  if (sampleRate !== undefined) out.sampleRate = sampleRate
+  const bitrate = num('bitrate')
+  if (bitrate !== undefined) out.bitrate = bitrate
+  const lyrics = override.lyrics?.trim() ?? ''
+  if (lyrics !== '') out.lyrics = lyrics
+  const seed = num('seed')
+  if (seed !== undefined) out.seed = seed
+  const steps = num('steps')
+  if (steps !== undefined) out.steps = steps
+  const cfgScale = num('cfg_scale')
+  if (cfgScale !== undefined) out.cfgScale = cfgScale
+  return out
 }
 
 function useConfig(scope: AudiogenScope) {
@@ -123,6 +172,8 @@ export function StudioView(props: {
   const [model, setModel] = useState('')
   // 多模型对比：同一提示词逐模型生成
   const [selectedModels, setSelectedModels] = useState<string[]>([])
+  // 每模型参数覆盖（留空 = 自动沿用全局配置）
+  const [overrides, setOverrides] = useState<Record<string, Record<string, string>>>({})
   const [voice, setVoice] = useState('')
   const [speed, setSpeed] = useState('')
   const [duration, setDuration] = useState('')
@@ -180,6 +231,24 @@ export function StudioView(props: {
       return [visibleModels[0]!]
     })
   }, [visibleModels])
+
+  // 每模型覆盖值随勾选模型收缩（保留仍在勾选中的覆盖）
+  useEffect(() => {
+    setOverrides(current => {
+      const next: Record<string, Record<string, string>> = {}
+      for (const alias of selectedModels) {
+        if (current[alias] !== undefined) next[alias] = current[alias]!
+      }
+      return next
+    })
+  }, [selectedModels])
+
+  const setOverrideValue = (model: string, key: string, value: string): void => {
+    setOverrides(current => ({
+      ...current,
+      [model]: { ...(current[model] ?? {}), [key]: value },
+    }))
+  }
 
   useEffect(() => {
     if (visibleModels.length > 0 && !visibleModels.includes(model)) {
@@ -246,6 +315,8 @@ export function StudioView(props: {
             ...(bitrate.trim() !== '' ? { bitrate: Number(bitrate) } : {}),
             ...(audioChannel.trim() !== '' ? { audioChannel: Number(audioChannel) } : {}),
             ...(subtitle ? { subtitleEnable: true } : {}),
+            // 每模型参数覆盖（后置覆盖全局；仅音色设计外生效）
+            ...(target === '' ? {} : overrideSpread(overrides[target] ?? {})),
           })
         } catch (err) {
           gathered.push({ model: target, outputs: [], error: err instanceof Error ? err.message : String(err) })
@@ -364,6 +435,44 @@ export function StudioView(props: {
               ))}
             </div>
           </label>
+        ) : null}
+
+        {needModel && selectedModels.length > 0 ? (
+          <details className={css.advanced}>
+            <summary>每模型参数覆盖（默认自动：沿用上方相同配置，如输出格式均为 mp3）</summary>
+            <div className={css.overrideTable}>
+              <div className={css.overrideRow}>
+                <span className={`${css.overrideCell} ${css.overrideCellHead}`} />
+                {selectedModels.map(item => <span key={item} className={`${css.overrideCell} ${css.overrideCellHead}`}>{item}</span>)}
+              </div>
+              {OVERRIDE_ROWS.map(row => (
+                <div key={row.key} className={css.overrideRow}>
+                  <span className={css.overrideCell} title={row.label}>{row.label}</span>
+                  {selectedModels.map(item => {
+                    const value = overrides[item]?.[row.key] ?? ''
+                    return (
+                      <span key={item} className={css.overrideCell}>
+                        {row.type === 'select' ? (
+                          <select className={css.input} value={value} onChange={event => setOverrideValue(item, row.key, event.target.value)}>
+                            <option value="">自动</option>
+                            {row.options!.map(option => <option key={option} value={option}>{option}</option>)}
+                          </select>
+                        ) : (
+                          <input
+                            className={css.input}
+                            type={row.type === 'number' ? 'number' : 'text'}
+                            value={value}
+                            placeholder={row.placeholder ?? '自动'}
+                            onChange={event => setOverrideValue(item, row.key, event.target.value)}
+                          />
+                        )}
+                      </span>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+          </details>
         ) : null}
 
         {mode === 'tts' ? (

@@ -857,3 +857,38 @@
   font-size: 11px;
   color: var(--dsw-alias-label-tertiary, #9ca3af);
 }
+
+/* 每模型参数覆盖矩阵 */
+.overrideTable {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.overrideRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.overrideCell {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overrideCell .input {
+  min-height: 30px;
+  padding: 5px 8px;
+}
+
+.overrideCellHead {
+  font-weight: 700;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  white-space: normal;
+}

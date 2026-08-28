@@ -147,6 +147,35 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
         items: { type: 'string' },
         description: 'Optional: several configured model aliases to generate the SAME prompt with each one, sequentially, for comparison (e.g. ["speech-2.8-hd","speech-2.6-hd"]). Cannot be combined with model; when present, models wins.',
       },
+      model_params: {
+        type: 'object',
+        additionalProperties: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+            format: { type: 'string', description: 'Output format override (mp3/wav/pcm…).' },
+            duration: { type: 'number', description: 'Duration override in seconds.' },
+            voice: { type: 'string', description: 'Voice id override.' },
+            speed: { type: 'number', description: 'Speed override.' },
+            emotion: { type: 'string', description: 'MiniMax emotion override.' },
+            vol: { type: 'number', description: 'MiniMax volume override.' },
+            pitch: { type: 'integer', description: 'MiniMax pitch override.' },
+            sample_rate: { type: 'integer', description: 'MiniMax sample rate override.' },
+            bitrate: { type: 'integer', description: 'MiniMax bitrate override.' },
+            lyrics: { type: 'string', description: 'Music lyrics override.' },
+            is_instrumental: { type: 'boolean', description: 'Instrumental override.' },
+            loop: { type: 'boolean', description: 'ElevenLabs loop override.' },
+            prompt_influence: { type: 'number', description: 'ElevenLabs prompt influence override.' },
+            seed: { type: 'integer', description: 'Stable Audio seed override.' },
+            steps: { type: 'integer', description: 'Stable Audio steps override.' },
+            cfg_scale: { type: 'number', description: 'Stable Audio cfg_scale override.' },
+            subtitle_enable: { type: 'boolean', description: 'MiniMax subtitle override.' },
+            aigc_watermark: { type: 'boolean', description: 'MiniMax watermark override.' },
+            language_boost: { type: 'string', description: 'MiniMax language boost override.' },
+          },
+        },
+        description: 'Optional per-model parameter overrides used with "models" (automatic by default = all models share the global params). Keys are model aliases; values are partial param objects using the same param names (format, duration, voice, speed, emotion, vol, pitch, sample_rate, bitrate, lyrics, is_instrumental, loop, prompt_influence, seed, steps, cfg_scale, subtitle_enable, aigc_watermark, language_boost, pronunciation_tone, voice_modify, timbre_weights). Unset fields fall back to the global values.',
+      },
       voice: { type: 'string', description: 'Optional voice id/name for TTS providers. Required for MiniMax TTS (e.g. male-qn-qingse, female-shaonv); fetch the account voices in Settings > Plugins > AI Audio.' },
       preview_text: { type: 'string', description: 'Optional preview text for voice_design.' },
       speed: { type: 'number', description: 'Optional speaking rate / speed multiplier where supported. MiniMax range 0.5-2.0 (default 1).' },
@@ -213,24 +242,74 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       const config = resolve()
       ensureConfigured(config)
       const mode: AudioMode = args.mode === 'music' ? 'music' : args.mode === 'sfx' ? 'sfx' : args.mode === 'voice_design' ? 'voice_design' : 'tts'
-      const buildRequest = (picked: { channel: AudioChannel; alias: string; upstream: string }): GenerateAudioRequest => {
-        const voiceModify = typeof args.voice_modify === 'object' && args.voice_modify !== null
+      /** 把生成参数（snake_case 入参或 model_params 片段）映射为请求字段。 */
+      const mapParams = (raw: Record<string, unknown>): Partial<GenerateAudioRequest> => {
+        const voiceModify = typeof raw.voice_modify === 'object' && raw.voice_modify !== null
           ? (() => {
-            const raw = args.voice_modify as Record<string, unknown>
+            const src = raw.voice_modify as Record<string, unknown>
             const out: { pitch?: number; intensity?: number; timbre?: number; soundEffects?: string } = {}
-            if (typeof raw.pitch === 'number') out.pitch = raw.pitch
-            if (typeof raw.intensity === 'number') out.intensity = raw.intensity
-            if (typeof raw.timbre === 'number') out.timbre = raw.timbre
-            if (typeof raw.sound_effects === 'string' && raw.sound_effects.trim() !== '') out.soundEffects = raw.sound_effects.trim()
+            if (typeof src.pitch === 'number') out.pitch = src.pitch
+            if (typeof src.intensity === 'number') out.intensity = src.intensity
+            if (typeof src.timbre === 'number') out.timbre = src.timbre
+            if (typeof src.sound_effects === 'string' && src.sound_effects.trim() !== '') out.soundEffects = src.sound_effects.trim()
             return Object.keys(out).length > 0 ? out : undefined
           })()
           : undefined
-        const timbreWeights = Array.isArray(args.timbre_weights)
-          ? args.timbre_weights
+        const timbreWeights = Array.isArray(raw.timbre_weights)
+          ? raw.timbre_weights
             .filter((item): item is { voice_id: string; weight: number } => typeof item === 'object' && item !== null && typeof (item as { voice_id?: unknown }).voice_id === 'string' && typeof (item as { weight?: unknown }).weight === 'number')
             .map(item => ({ voiceId: (item.voice_id as string).trim(), weight: item.weight as number }))
             .filter(item => item.voiceId !== '')
           : undefined
+        const stringOrEmpty = (key: string): string | undefined => {
+          const value = raw[key]
+          return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+        }
+        const finiteOrUndefined = (key: string): number | undefined => {
+          const value = raw[key]
+          return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+        }
+        return {
+          ...(stringOrEmpty('voice') !== undefined ? { voice: stringOrEmpty('voice')! } : {}),
+          ...(stringOrEmpty('preview_text') !== undefined ? { previewText: stringOrEmpty('preview_text')! } : {}),
+          ...(finiteOrUndefined('speed') !== undefined ? { speed: finiteOrUndefined('speed')! } : {}),
+          ...(finiteOrUndefined('duration') !== undefined ? { duration: finiteOrUndefined('duration')! } : {}),
+          ...(stringOrEmpty('lyrics') !== undefined ? { lyrics: stringOrEmpty('lyrics')! } : {}),
+          ...(typeof raw.is_instrumental === 'boolean' ? { isInstrumental: raw.is_instrumental } : {}),
+          ...(typeof raw.loop === 'boolean' ? { loop: raw.loop } : {}),
+          ...(finiteOrUndefined('prompt_influence') !== undefined ? { promptInfluence: finiteOrUndefined('prompt_influence')! } : {}),
+          ...(finiteOrUndefined('seed') !== undefined ? { seed: finiteOrUndefined('seed')! } : {}),
+          ...(finiteOrUndefined('steps') !== undefined ? { steps: finiteOrUndefined('steps')! } : {}),
+          ...(finiteOrUndefined('cfg_scale') !== undefined ? { cfgScale: finiteOrUndefined('cfg_scale')! } : {}),
+          ...(stringOrEmpty('format') !== undefined ? { format: stringOrEmpty('format')! } : {}),
+          // ---- MiniMax / ElevenLabs / Stability 专属字段 ----
+          ...(stringOrEmpty('emotion') !== undefined ? { emotion: stringOrEmpty('emotion')! } : {}),
+          ...(finiteOrUndefined('vol') !== undefined ? { vol: finiteOrUndefined('vol')! } : {}),
+          ...(finiteOrUndefined('pitch') !== undefined ? { pitch: finiteOrUndefined('pitch')! } : {}),
+          ...(typeof raw.text_normalization === 'boolean' ? { textNormalization: raw.text_normalization } : {}),
+          ...(typeof raw.latex_read === 'boolean' ? { latexRead: raw.latex_read } : {}),
+          ...(Array.isArray(raw.pronunciation_tone) && raw.pronunciation_tone.length > 0
+            ? { pronunciationTone: raw.pronunciation_tone.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map((item: string) => item.trim()) }
+            : {}),
+          ...(finiteOrUndefined('sample_rate') !== undefined ? { sampleRate: finiteOrUndefined('sample_rate')! } : {}),
+          ...(finiteOrUndefined('bitrate') !== undefined ? { bitrate: finiteOrUndefined('bitrate')! } : {}),
+          ...(finiteOrUndefined('channel') !== undefined ? { audioChannel: finiteOrUndefined('channel')! } : {}),
+          ...(typeof raw.force_cbr === 'boolean' ? { forceCbr: raw.force_cbr } : {}),
+          ...(typeof raw.subtitle_enable === 'boolean' ? { subtitleEnable: raw.subtitle_enable } : {}),
+          ...(typeof raw.aigc_watermark === 'boolean' ? { aigcWatermark: raw.aigc_watermark } : {}),
+          ...(stringOrEmpty('language_boost') !== undefined ? { languageBoost: stringOrEmpty('language_boost')! } : {}),
+          ...(voiceModify !== undefined ? { voiceModify } : {}),
+          ...(timbreWeights !== undefined && timbreWeights.length > 0 ? { timbreWeights } : {}),
+        }
+      }
+      const buildRequest = (picked: { channel: AudioChannel; alias: string; upstream: string }): GenerateAudioRequest => {
+        const base = mapParams(args as unknown as Record<string, unknown>)
+        // 每模型参数覆盖（model_params[alias]）；缺省 = 自动沿用全局配置
+        let override: Partial<GenerateAudioRequest> = {}
+        if (typeof args.model_params === 'object' && args.model_params !== null) {
+          const perModel = (args.model_params as Record<string, unknown>)[picked.alias]
+          if (typeof perModel === 'object' && perModel !== null) override = mapParams(perModel as Record<string, unknown>)
+        }
         return {
           mode,
           model: picked.alias,
@@ -238,36 +317,8 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
           channelId: picked.channel.id,
           channel: picked.channel.name,
           prompt: args.prompt.trim(),
-          ...(typeof args.voice === 'string' && args.voice.trim() !== '' ? { voice: args.voice.trim() } : {}),
-          ...(typeof args.preview_text === 'string' && args.preview_text.trim() !== '' ? { previewText: args.preview_text.trim() } : {}),
-          ...(typeof args.speed === 'number' ? { speed: args.speed } : {}),
-          ...(typeof args.duration === 'number' ? { duration: args.duration } : {}),
-          ...(typeof args.lyrics === 'string' && args.lyrics.trim() !== '' ? { lyrics: args.lyrics.trim() } : {}),
-          ...(typeof args.is_instrumental === 'boolean' ? { isInstrumental: args.is_instrumental } : {}),
-          ...(typeof args.loop === 'boolean' ? { loop: args.loop } : {}),
-          ...(typeof args.prompt_influence === 'number' && Number.isFinite(args.prompt_influence) ? { promptInfluence: args.prompt_influence } : {}),
-          ...(typeof args.seed === 'number' && Number.isFinite(args.seed) ? { seed: args.seed } : {}),
-          ...(typeof args.steps === 'number' && Number.isFinite(args.steps) ? { steps: args.steps } : {}),
-          ...(typeof args.cfg_scale === 'number' && Number.isFinite(args.cfg_scale) ? { cfgScale: args.cfg_scale } : {}),
-          ...(typeof args.format === 'string' && args.format.trim() !== '' ? { format: args.format.trim() } : {}),
-          // ---- MiniMax TTS 专属字段 ----
-          ...(typeof args.emotion === 'string' && args.emotion.trim() !== '' ? { emotion: args.emotion.trim() } : {}),
-          ...(typeof args.vol === 'number' && Number.isFinite(args.vol) ? { vol: args.vol } : {}),
-          ...(typeof args.pitch === 'number' && Number.isFinite(args.pitch) ? { pitch: args.pitch } : {}),
-          ...(typeof args.text_normalization === 'boolean' ? { textNormalization: args.text_normalization } : {}),
-          ...(typeof args.latex_read === 'boolean' ? { latexRead: args.latex_read } : {}),
-          ...(Array.isArray(args.pronunciation_tone) && args.pronunciation_tone.length > 0
-            ? { pronunciationTone: args.pronunciation_tone.filter((item): item is string => typeof item === 'string' && item.trim() !== '').map((item: string) => item.trim()) }
-            : {}),
-          ...(typeof args.sample_rate === 'number' && Number.isFinite(args.sample_rate) ? { sampleRate: args.sample_rate } : {}),
-          ...(typeof args.bitrate === 'number' && Number.isFinite(args.bitrate) ? { bitrate: args.bitrate } : {}),
-          ...(typeof args.channel === 'number' && Number.isFinite(args.channel) ? { audioChannel: args.channel } : {}),
-          ...(typeof args.force_cbr === 'boolean' ? { forceCbr: args.force_cbr } : {}),
-          ...(typeof args.subtitle_enable === 'boolean' ? { subtitleEnable: args.subtitle_enable } : {}),
-          ...(typeof args.aigc_watermark === 'boolean' ? { aigcWatermark: args.aigc_watermark } : {}),
-          ...(typeof args.language_boost === 'string' && args.language_boost.trim() !== '' ? { languageBoost: args.language_boost.trim() } : {}),
-          ...(voiceModify !== undefined ? { voiceModify } : {}),
-          ...(timbreWeights !== undefined && timbreWeights.length > 0 ? { timbreWeights } : {}),
+          ...base,
+          ...override,
         }
       }
       /** 单模型执行：生成 + 保存文件 + 历史 + 可选资源库；错误收敛为分组结果。 */
