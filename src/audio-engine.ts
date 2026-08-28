@@ -144,7 +144,7 @@ function findAudioUrl(value: unknown): string | undefined {
   }
   if (value === null || typeof value !== 'object') return undefined
   const record = value as Record<string, unknown>
-  for (const key of ['url', 'audio_url', 'href', 'link']) {
+  for (const key of ['url', 'audio_url', 'href', 'link', 'audio', 'data', 'output', 'result', 'value']) {
     const candidate = record[key]
     const found = findAudioUrl(candidate)
     if (found !== undefined) return found

@@ -53,8 +53,8 @@
   "files": [
     "lib",
     "src",
+    "skills",
     "cordis.patch.yml",
-    "docs",
     "README.md"
   ],
   "license": "Apache-2.0",
