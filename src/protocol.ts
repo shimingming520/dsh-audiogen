@@ -114,6 +114,10 @@ export interface GenerateAudioRequest {
   speed?: number
   /** Requested duration in seconds (music/sfx). */
   duration?: number
+  /** MiniMax 音乐生成歌词；music-3.0 / music-cover 在非纯音乐模式下必填。 */
+  lyrics?: string
+  /** MiniMax 是否生成纯音乐（无歌词/人声）；true 时 lyrics 可为空。 */
+  isInstrumental?: boolean
   /** Output format, e.g. mp3, wav, pcm. */
   format?: string
   /** Channel this request targets (host falls back to default). */

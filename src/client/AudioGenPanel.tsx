@@ -60,6 +60,8 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
   const [voice, setVoice] = useState('')
   const [speed, setSpeed] = useState('')
   const [duration, setDuration] = useState('')
+  const [lyrics, setLyrics] = useState('')
+  const [instrumental, setInstrumental] = useState(false)
   const [format, setFormat] = useState('mp3')
   // MiniMax TTS 高级参数（其他厂商忽略）
   const [emotion, setEmotion] = useState('')
@@ -109,6 +111,8 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
         ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
         ...(speed.trim() !== '' ? { speed: Number(speed) } : {}),
         ...(duration.trim() !== '' ? { duration: Number(duration) } : {}),
+        ...(lyrics.trim() !== '' ? { lyrics: lyrics.trim() } : {}),
+        ...(instrumental ? { isInstrumental: true } : {}),
         ...(format.trim() !== '' ? { format: format.trim() } : {}),
         ...(emotion.trim() !== '' ? { emotion: emotion.trim() } : {}),
         ...(vol.trim() !== '' ? { vol: Number(vol) } : {}),
@@ -252,14 +256,31 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
             </label>
           ) : null}
 
+          {mode === 'music' ? (
+            <>
+              <label className={css.label}>
+                <span>歌词（纯音乐模式可留空；多段用空行分隔）</span>
+                <textarea className={css.textarea} value={lyrics} onChange={event => setLyrics(event.target.value)} placeholder={'第一段歌词…\n\n第二段歌词…'} />
+              </label>
+              <label className={css.checkbox}>
+                <input type="checkbox" checked={instrumental} onChange={event => setInstrumental(event.target.checked)} />
+                <span>纯音乐（无歌词/人声）is_instrumental</span>
+              </label>
+            </>
+          ) : null}
+
           {needModel ? (
             <label className={css.label}>
               <span>{tt('format.label')}</span>
               <select className={css.select} value={format} onChange={event => setFormat(event.target.value)}>
                 <option value="mp3">mp3</option>
                 <option value="wav">wav</option>
-                <option value="flac">flac</option>
-                <option value="ogg">ogg</option>
+                {mode === 'tts' ? (
+                  <>
+                    <option value="flac">flac</option>
+                    <option value="ogg">ogg</option>
+                  </>
+                ) : null}
                 <option value="pcm">pcm</option>
               </select>
             </label>

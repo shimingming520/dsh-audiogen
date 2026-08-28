@@ -122,6 +122,8 @@ function parseGenerateRequest(body: Record<string, unknown>): GenerateAudioReque
     ...(typeof body.previewText === 'string' && body.previewText.trim() !== '' ? { previewText: body.previewText.trim() } : {}),
     ...(num(body.speed) !== undefined ? { speed: num(body.speed)! } : {}),
     ...(num(body.duration) !== undefined ? { duration: num(body.duration)! } : {}),
+    ...(typeof body.lyrics === 'string' && body.lyrics.trim() !== '' ? { lyrics: body.lyrics.trim() } : {}),
+    ...(typeof body.isInstrumental === 'boolean' ? { isInstrumental: body.isInstrumental } : {}),
     ...(typeof body.format === 'string' && body.format.trim() !== '' ? { format: body.format.trim() } : {}),
     ...(typeof body.channelId === 'string' && body.channelId !== '' ? { channelId: body.channelId } : {}),
     // ---- MiniMax TTS 专属字段（其他厂商忽略） ----

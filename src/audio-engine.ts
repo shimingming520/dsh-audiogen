@@ -124,7 +124,7 @@ function findBase64Audio(value: unknown): string | undefined {
   }
   if (value === null || typeof value !== 'object') return undefined
   const record = value as Record<string, unknown>
-  for (const key of ['audio', 'b64_json', 'base64', 'data', 'output', 'result', 'value']) {
+  for (const key of ['audio', 'music', 'b64_json', 'base64', 'data', 'output', 'result', 'value']) {
     const candidate = record[key]
     const found = findBase64Audio(candidate)
     if (found !== undefined) return found
@@ -437,15 +437,31 @@ async function minimax(channel: AudioChannel, request: GenerateAudioRequest, sig
   }
 
   if (request.mode === 'music') {
+    // MiniMax 音乐生成官方字段：model/lyrics/prompt/is_instrumental/duration/
+    // audio_setting{format, sample_rate, bitrate}。音频输出配置为固定枚举：
+    // format mp3|wav|pcm；sample_rate 16000|24000|32000|44100；
+    // bitrate 32000|64000|128000|256000，超出枚举的值回退默认。
+    const MUSIC_FORMATS = new Set(['mp3', 'wav', 'pcm'])
+    const MUSIC_SAMPLE_RATES = new Set([16000, 24000, 32000, 44100])
+    const MUSIC_BITRATES = new Set([32000, 64000, 128000, 256000])
+    const lyrics = request.lyrics?.trim() ?? ''
+    if (lyrics === '' && request.isInstrumental !== true) {
+      throw new AudioGenError(
+        'MiniMax 音乐生成需要歌词（lyrics 参数），或在「纯音乐」模式（is_instrumental=true）下生成；也可让面板/Agent 先为提示词创作一段歌词。',
+        'lyrics-required',
+      )
+    }
     const endpoint = `${base}/music_generation`
     const body: Record<string, unknown> = {
       model,
       prompt: request.prompt,
+      ...(lyrics === '' ? {} : { lyrics }),
+      ...(request.isInstrumental !== undefined ? { is_instrumental: request.isInstrumental } : {}),
       ...(request.duration !== undefined ? { duration: request.duration } : {}),
       audio_setting: {
-        format: request.format ?? 'mp3',
-        sample_rate: 44100,
-        bitrate: 256000,
+        format: MUSIC_FORMATS.has(request.format ?? 'mp3') ? (request.format ?? 'mp3') : 'mp3',
+        sample_rate: MUSIC_SAMPLE_RATES.has(request.sampleRate ?? 44100) ? (request.sampleRate ?? 44100) : 44100,
+        bitrate: MUSIC_BITRATES.has(request.bitrate ?? 256000) ? (request.bitrate ?? 256000) : 256000,
       },
     }
     const response = await fetchWithTimeout(endpoint, {
