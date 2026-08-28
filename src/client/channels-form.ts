@@ -78,7 +78,11 @@ function deepEqualJson(a: unknown, b: unknown): boolean {
 /** Trim and normalize a draft channel (models never carry empty aliases). */
 function stripChannel(channel: ChannelDraft): ChannelDraft {
   const models = channel.models
-    .map(model => ({ alias: model.alias.trim(), id: model.id.trim() === '' ? model.alias.trim() : model.id.trim() }))
+    .map(model => ({
+      alias: model.alias.trim(),
+      id: model.id.trim() === '' ? model.alias.trim() : model.id.trim(),
+      ...(model.category === undefined ? {} : { category: model.category }),
+    }))
     .filter(model => model.alias !== '')
   return {
     id: channel.id,

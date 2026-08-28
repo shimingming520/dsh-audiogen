@@ -11,10 +11,11 @@ import { randomUUID } from 'node:crypto'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { SettingsConflictError, settingsNamespace, type SettingsDescriptor } from '@deepseek-ai/dsh-settings'
 import { generateAudio, AudioGenError, type AudioChannel } from './audio-engine.ts'
+import { discoverAudioModels } from './audio-models.ts'
 import { AUDIO_PRESETS } from './audio-presets.ts'
 import { appendHistory, clearHistory, listHistory, readAudioFile, removeHistory, saveAudioFile } from './audio-store.ts'
 import {
-  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, GENERATE_API, HISTORY_API, PRESETS_API, SETTINGS_API,
+  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, GENERATE_API, HISTORY_API, MODEL_API, PRESETS_API, SETTINGS_API,
   type GenerateAudioRequest, type GeneratedAudio, type HistoryEntryInput,
 } from './protocol.ts'
 
@@ -191,6 +192,32 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
       handler: async (req, res) => {
         if (!guard(req, res, 'POST')) return
         writeJson(res, 200, { ok: true, presets: AUDIO_PRESETS })
+      },
+    },
+    // ---------------------------------------------- model/voice discovery
+    {
+      kind: 'exact',
+      path: MODEL_API.discover,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const view = deps.resolveChannels()
+        const stored = view.channels.find(candidate => candidate.id === (typeof body?.channelId === 'string' ? body.channelId : undefined))
+          ?? view.channels.find(candidate => candidate.id === view.defaultChannelId)
+          ?? view.channels[0]
+        const channel: AudioChannel = {
+          id: stored?.id ?? 'preview',
+          preset: stored?.preset ?? '',
+          name: stored?.name ?? '',
+          apiUrl: typeof body?.apiUrl === 'string' && body.apiUrl.trim() !== '' ? body.apiUrl.trim() : (stored?.apiUrl ?? ''),
+          apiKey: typeof body?.apiKey === 'string' && body.apiKey.trim() !== '' ? body.apiKey.trim() : (stored?.apiKey ?? ''),
+          models: stored?.models ?? [],
+        }
+        try {
+          writeJson(res, 200, { ok: true, ...await discoverAudioModels(channel) })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'model-discovery-failed', message: messageOf(error) })
+        }
       },
     },
     // -------------------------------------------------- settings describe

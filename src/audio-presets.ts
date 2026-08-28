@@ -26,9 +26,9 @@ export const AUDIO_PRESETS: AudioPresetProvider[] = [
     apiUrl: 'https://api.openai.com/v1',
     hint: 'OpenAI 官方语音合成接口（/audio/speech）',
     models: [
-      { alias: 'tts-1', id: 'tts-1' },
-      { alias: 'tts-1-hd', id: 'tts-1-hd' },
-      { alias: 'gpt-4o-mini-tts', id: 'gpt-4o-mini-tts' },
+      { alias: 'tts-1', id: 'tts-1', category: 'tts' },
+      { alias: 'tts-1-hd', id: 'tts-1-hd', category: 'tts' },
+      { alias: 'gpt-4o-mini-tts', id: 'gpt-4o-mini-tts', category: 'tts' },
     ],
   },
   {
@@ -37,22 +37,31 @@ export const AUDIO_PRESETS: AudioPresetProvider[] = [
     apiUrl: 'https://api.elevenlabs.io/v1',
     hint: 'ElevenLabs TTS；模型列表请填写你的 Voice ID（如 Rachel / Adam 等别名）',
     models: [
-      { alias: 'Rachel', id: '21m00Tcm4TlvDq8ikWAM' },
-      { alias: 'Adam', id: 'pNInz6obpgDQGcFmaJgB' },
-      { alias: 'Antoni', id: 'ErXwobaYiN019PkySvjV' },
-      { alias: 'Bella', id: 'EXAVITQu4vr4xnSDxMaL' },
+      { alias: 'Rachel', id: '21m00Tcm4TlvDq8ikWAM', category: 'tts' },
+      { alias: 'Adam', id: 'pNInz6obpgDQGcFmaJgB', category: 'tts' },
+      { alias: 'Antoni', id: 'ErXwobaYiN019PkySvjV', category: 'tts' },
+      { alias: 'Bella', id: 'EXAVITQu4vr4xnSDxMaL', category: 'tts' },
     ],
   },
   {
     id: 'minimax',
     name: 'MiniMax',
-    apiUrl: 'https://api.minimax.chat/v1',
-    hint: 'MiniMax 语音合成（T2A）；需在 API URL 后按官方要求携带 GroupId 或使用完整接口地址',
+    apiUrl: 'https://api.minimaxi.com',
+    hint: 'MiniMax 音色设计 / TTS / 音乐生成；可使用“获取可用模型”拉取账号音色',
     models: [
-      { alias: 'speech-01-turbo', id: 'speech-01-turbo' },
-      { alias: 'speech-01-hd', id: 'speech-01-hd' },
-      { alias: 'speech-02-turbo', id: 'speech-02-turbo' },
-      { alias: 'speech-02-hd', id: 'speech-02-hd' },
+      // TTS models
+      { alias: 'speech-2.8-hd', id: 'speech-2.8-hd', category: 'tts' },
+      { alias: 'speech-2.8-turbo', id: 'speech-2.8-turbo', category: 'tts' },
+      { alias: 'speech-2.6-hd', id: 'speech-2.6-hd', category: 'tts' },
+      { alias: 'speech-2.6-turbo', id: 'speech-2.6-turbo', category: 'tts' },
+      { alias: 'speech-02-hd', id: 'speech-02-hd', category: 'tts' },
+      { alias: 'speech-02-turbo', id: 'speech-02-turbo', category: 'tts' },
+      { alias: 'speech-01-hd', id: 'speech-01-hd', category: 'tts' },
+      { alias: 'speech-01-turbo', id: 'speech-01-turbo', category: 'tts' },
+      // Music models
+      { alias: 'music-3.0', id: 'music-3.0', category: 'music' },
+      { alias: 'music-2.6', id: 'music-2.6', category: 'music' },
+      { alias: 'music-cover', id: 'music-cover', category: 'music' },
     ],
   },
   {
@@ -61,8 +70,8 @@ export const AUDIO_PRESETS: AudioPresetProvider[] = [
     apiUrl: 'https://api.stability.ai/v2beta/audio',
     hint: 'Stability AI 音乐/音效生成（stable-audio 系列）',
     models: [
-      { alias: 'stable-audio-2.0', id: 'stable-audio-2.0' },
-      { alias: 'stable-audio-1.0', id: 'stable-audio-1.0' },
+      { alias: 'stable-audio-2.0', id: 'stable-audio-2.0', category: 'music' },
+      { alias: 'stable-audio-1.0', id: 'stable-audio-1.0', category: 'music' },
     ],
   },
   {

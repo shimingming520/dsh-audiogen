@@ -14,7 +14,7 @@ import {
   type SettingsScopeSnapshot,
   type SnapshotStore,
 } from '@deepseek-ai/dsh-client-runtime/client'
-import { SETTINGS_API, type ChannelConfig } from '../protocol.ts'
+import { SETTINGS_API, type AudioModelCategory, type ChannelConfig } from '../protocol.ts'
 
 /** The fields this plugin's settings card edits. */
 export interface AudiogenConfig {
@@ -269,7 +269,10 @@ export function bindAudiogenScope(fetchFn: typeof fetch = fetch): AudiogenScope 
  * Falls back to the legacy flat allow-list while no channels exist (upgrade
  * path). Pure projection — no host calls.
  */
-export function audioModelOptions(config: AudiogenConfig | undefined): { models: string[]; defaultChannelId?: string } {
+export function audioModelOptions(config: AudiogenConfig | undefined): {
+  models: Array<{ alias: string; category?: AudioModelCategory }>
+  defaultChannelId?: string
+} {
   const channels = config?.channels ?? []
   if (channels.length === 0) {
     return { models: [] }
@@ -278,11 +281,14 @@ export function audioModelOptions(config: AudiogenConfig | undefined): { models:
     ? config.defaultChannelId
     : channels[0]!.id
   const ordered = [defaultId, ...channels.filter(channel => channel.id !== defaultId).map(channel => channel.id)]
-  const models: string[] = []
+  const models: Array<{ alias: string; category?: AudioModelCategory }> = []
+  const seen = new Set<string>()
   for (const id of ordered) {
     const channel = channels.find(candidate => candidate.id === id)!
     for (const model of channel.models) {
-      if (model.alias !== '' && !models.includes(model.alias)) models.push(model.alias)
+      if (model.alias === '' || seen.has(model.alias)) continue
+      seen.add(model.alias)
+      models.push({ alias: model.alias, ...(model.category === undefined ? {} : { category: model.category }) })
     }
   }
   return models.length > 0 ? { models, defaultChannelId: defaultId } : { models: [], defaultChannelId: defaultId }

@@ -8,7 +8,7 @@
 export const AUDIOGEN_SETTINGS_NAMESPACE = 'dsh-audiogen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '0.1.0'
+export const PLUGIN_VERSION = '0.2.0'
 
 /** Same-origin route family (loopback-only, mirroring dsh-imagegen). */
 export const SETTINGS_API = {
@@ -21,6 +21,11 @@ export const GENERATE_API = '/api/dsh-audiogen/generate' as const
 
 /** Host-mediated built-in provider catalog (channels the user can instantiate). */
 export const PRESETS_API = '/api/dsh-audiogen/presets' as const
+
+/** Host-mediated model/voice discovery endpoint. */
+export const MODEL_API = {
+  discover: '/api/dsh-audiogen/models/discover',
+} as const
 
 /** Loopback-only audio file reader for panel/tool-result previews. */
 export const AUDIO_API = {
@@ -42,12 +47,28 @@ export const HISTORY_MAX = 50
 /** Audio generation modes. */
 export type AudioMode = 'tts' | 'music' | 'sfx'
 
+/** The capability category of an audio model/voice. */
+export type AudioModelCategory =
+  | 'tts'
+  | 'music'
+  | 'sfx'
+  | 'voice_design'
+  | 'voice_clone'
+
 /** One model mapping in a channel's catalog: display alias → upstream id. */
 export interface ModelMapping {
   /** User-facing model/voice name (defaults to the upstream id). */
   alias: string
   /** Upstream model or voice id sent to the provider. */
   id: string
+  /** Optional capability category, used by the UI to group model lists. */
+  category?: AudioModelCategory
+}
+
+/** A model/voice discovered from a vendor endpoint (not yet persisted). */
+export interface DiscoveredAudioModel extends ModelMapping {
+  /** Optional human-readable description from the vendor. */
+  description?: string
 }
 
 /**

@@ -187,13 +187,14 @@ async function normalizeAudioResponse(
     } catch {
       throw new AudioGenError('audio endpoint returned an unprocessable response body', 'audio-bad-response')
     }
-    const base64 = findBase64Audio(parsed)
-    if (base64 !== undefined && base64.length > 0) {
+    const encoded = findBase64Audio(parsed)
+    if (encoded !== undefined && encoded.length > 0) {
       let data: Uint8Array
       try {
-        data = new Uint8Array(Buffer.from(base64, 'base64'))
+        const isHex = /^[0-9a-fA-F]+$/.test(encoded) && encoded.length % 2 === 0
+        data = new Uint8Array(Buffer.from(encoded, isHex ? 'hex' : 'base64'))
       } catch {
-        throw new AudioGenError('audio endpoint returned invalid base64', 'audio-bad-response')
+        throw new AudioGenError('audio endpoint returned invalid audio encoding', 'audio-bad-response')
       }
       return [{ data, mime: detectAudioMime(data) ?? contentType ?? 'audio/mpeg' }]
     }
@@ -268,27 +269,50 @@ async function elevenLabs(channel: AudioChannel, request: GenerateAudioRequest, 
   return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
 }
 
+function minimaxApiBase(base: string): string {
+  const trimmed = endpointBase(base)
+  return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`
+}
+
 async function minimax(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string }>> {
-  const base = endpointBase(channel.apiUrl)
-  const endpoint = /\/t2a_v2(\?|$)/i.test(base) ? base : `${base}/t2a_v2`
-  const model = (request.upstream ?? request.model) || 'speech-01-turbo'
+  const base = minimaxApiBase(channel.apiUrl)
+  const model = (request.upstream ?? request.model) || (request.mode === 'music' ? 'music-3.0' : 'speech-2.8-hd')
   const voice = request.voice ?? request.model ?? ''
-  const body: Record<string, unknown> = {
-    model,
-    text: request.prompt,
-    stream: false,
-    ...(voice === '' ? {} : { voice_setting: {
-      voice_id: voice,
-      ...(request.speed !== undefined ? { speed: request.speed } : {}),
-      vol: 1,
-      pitch: 0,
-    } }),
-    audio_setting: {
-      format: request.format ?? 'mp3',
-      sample_rate: 32000,
-      bitrate: 128000,
-    },
+
+  let endpoint: string
+  let body: Record<string, unknown>
+  if (request.mode === 'music') {
+    endpoint = `${base}/music_generation`
+    body = {
+      model,
+      prompt: request.prompt,
+      ...(request.duration !== undefined ? { duration: request.duration } : {}),
+      audio_setting: {
+        format: request.format ?? 'mp3',
+        sample_rate: 44100,
+        bitrate: 256000,
+      },
+    }
+  } else {
+    endpoint = `${base}/t2a_v2`
+    body = {
+      model,
+      text: request.prompt,
+      stream: false,
+      ...(voice === '' ? {} : { voice_setting: {
+        voice_id: voice,
+        ...(request.speed !== undefined ? { speed: request.speed } : {}),
+        vol: 1,
+        pitch: 0,
+      } }),
+      audio_setting: {
+        format: request.format ?? 'mp3',
+        sample_rate: 32000,
+        bitrate: 128000,
+      },
+    }
   }
+
   const response = await fetchWithTimeout(endpoint, {
     method: 'POST',
     redirect: 'error',

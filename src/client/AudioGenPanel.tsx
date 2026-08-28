@@ -62,11 +62,15 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
   const [outputs, setOutputs] = useState<GeneratedAudio[]>([])
   const { entries, reload, clear } = useHistory()
 
+  const visibleModels = useMemo(() => modelOptions.models
+    .filter(entry => entry.category === undefined || entry.category === 'tts' && mode === 'tts' || entry.category === mode)
+    .map(entry => entry.alias), [modelOptions.models, mode])
+
   useEffect(() => {
-    if (modelOptions.models.length > 0 && !modelOptions.models.includes(model)) {
-      setModel(modelOptions.models[0]!)
+    if (visibleModels.length > 0 && !visibleModels.includes(model)) {
+      setModel(visibleModels[0]!)
     }
-  }, [modelOptions.models, model])
+  }, [visibleModels, model])
 
   const submit = async (): Promise<void> => {
     if (prompt.trim() === '') {
@@ -78,7 +82,7 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
     try {
       const response = await api.generate({
         mode,
-        model: (model || modelOptions.models[0]) ?? '',
+        model: (model || visibleModels[0]) ?? '',
         prompt: prompt.trim(),
         ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
         ...(speed.trim() !== '' ? { speed: Number(speed) } : {}),
@@ -132,8 +136,8 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
           <label className={css.label}>
             <span>{tt('model.label')}</span>
             <select className={css.select} value={model} onChange={event => setModel(event.target.value)}>
-              {modelOptions.models.length === 0 ? <option value="">（请在设置中添加）</option> : null}
-              {modelOptions.models.map(item => <option key={item} value={item}>{item}</option>)}
+              {visibleModels.length === 0 ? <option value="">（当前模式暂无可用模型）</option> : null}
+              {visibleModels.map(item => <option key={item} value={item}>{item}</option>)}
             </select>
           </label>
           {mode === 'tts' ? (
@@ -161,7 +165,7 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
             </select>
           </label>
           {!connected && <p className={css.hint}>{tt('config.missing')}</p>}
-          <button type="button" className={css.generate} disabled={loading || !connected} onClick={() => void submit()}>
+          <button type="button" className={css.generate} disabled={loading || !connected || visibleModels.length === 0} onClick={() => void submit()}>
             {loading ? tt('generating') : tt('generate')}
           </button>
         </div>

@@ -12,7 +12,7 @@ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client
 import { CardForm, booleanField, textField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
 import { ChannelsForm, type ChannelDraft, type ChannelsFormActions, type ChannelsFormState } from './channels-form.ts'
 import type { AudiogenScope } from './settings-scope.ts'
-import { PRESETS_API, type ModelMapping, type PresetProviderView } from '../protocol.ts'
+import { MODEL_API, PRESETS_API, type DiscoveredAudioModel, type ModelMapping, type PresetProviderView } from '../protocol.ts'
 import type { AudioGenKey } from './locales.ts'
 import css from './settings-card.module.css'
 
@@ -98,14 +98,22 @@ function newChannelDraft(preset: PresetProviderView | undefined, existing: Chann
 }
 
 function modelsToText(models: ModelMapping[]): string {
-  return models.map(model => `${model.alias}=${model.id}`).join('\n')
+  return models.map(model => `${model.alias}=${model.id}${model.category === undefined ? '' : ` @${model.category}`}`).join('\n')
 }
 
 function textToModels(text: string): ModelMapping[] {
   return text.split(/\n|,/).map(line => line.trim()).filter(Boolean).map(line => {
-    const eq = line.indexOf('=')
-    if (eq < 0) return { alias: line, id: line }
-    return { alias: line.slice(0, eq).trim(), id: line.slice(eq + 1).trim() }
+    const at = line.lastIndexOf(' @')
+    const category = at >= 0 ? line.slice(at + 2).trim() : undefined
+    const body = at >= 0 ? line.slice(0, at).trim() : line
+    const eq = body.indexOf('=')
+    const alias = eq >= 0 ? body.slice(0, eq).trim() : body.trim()
+    const id = eq >= 0 ? body.slice(eq + 1).trim() : alias
+    return {
+      alias,
+      id: id === '' ? alias : id,
+      ...(category === undefined || category === '' ? {} : { category: category as NonNullable<ModelMapping['category']> }),
+    }
   }).filter(model => model.alias !== '')
 }
 
@@ -118,6 +126,8 @@ export function AudioGenSettingsCard(props: AudioGenSettingsCardProps) {
   const [presets, setPresets] = useState<PresetProviderView[]>([])
   const [presetError, setPresetError] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [discovering, setDiscovering] = useState(false)
+  const [discoverError, setDiscoverError] = useState<string | null>(null)
 
   const [editName, setEditName] = useState('')
   const [editUrl, setEditUrl] = useState('')
@@ -159,6 +169,37 @@ export function AudioGenSettingsCard(props: AudioGenSettingsCardProps) {
     if (editKey.trim() !== '') props.channels.setChannelKey(editingId, editKey.trim())
     if (editDefault) props.channels.setDefaultChannel(editingId)
     setEditingId(null)
+  }
+
+  const discoverModels = async (): Promise<void> => {
+    if (editingId === null) return
+    setDiscovering(true)
+    setDiscoverError(null)
+    try {
+      const existing = channels.find(channel => channel.id === editingId)
+      const response = await fetch(MODEL_API.discover, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          channelId: editingId,
+          ...(editUrl.trim() !== '' ? { apiUrl: editUrl.trim() } : {}),
+          ...(editKey.trim() !== '' ? { apiKey: editKey.trim() } : {}),
+        }),
+      })
+      const body = await response.json() as { ok?: boolean; models?: DiscoveredAudioModel[]; message?: string; source?: string }
+      if (body.ok !== true || body.models === undefined) {
+        throw new Error(body.message ?? `HTTP ${response.status}`)
+      }
+      setEditModels(modelsToText([
+        ...body.models,
+        ...textToModels(editModels).filter(existingModel => !body.models!.some(model => model.id === existingModel.id)),
+      ]))
+      void existing
+    } catch (error) {
+      setDiscoverError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDiscovering(false)
+    }
   }
 
   return (
@@ -297,6 +338,12 @@ export function AudioGenSettingsCard(props: AudioGenSettingsCardProps) {
                 <label className={css.label} htmlFor={`audiogen-models-${editing.id}`}>{t('channel.models')}</label>
                 <textarea id={`audiogen-models-${editing.id}`} className={css.textarea} value={editModels} onChange={event => setEditModels(event.target.value)} />
                 <p className={css.sectionHint}>{t('channel.modelsHint')}</p>
+                <div className={css.channelAddRow}>
+                  <button type="button" className={css.channelAdd} disabled={discovering || !state.writable} onClick={() => void discoverModels()}>
+                    {discovering ? '获取中…' : '获取可用模型'}
+                  </button>
+                </div>
+                {discoverError !== null ? <p className={css.failed}>{discoverError}</p> : null}
               </div>
               <label className={css.label}>
                 <input type="checkbox" checked={editDefault} onChange={event => setEditDefault(event.target.checked)} /> {t('channel.default')}
