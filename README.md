@@ -15,9 +15,18 @@ DeepSeek Harness（DSH）AI 音频插件：让 Agent 不只会回答，还能生
 
 ## 安装
 
+已发布到 npm：
+
+```bash
+dsh plugin --profile web add dsh-audiogen
+# 或指定版本
+dsh plugin --profile web add dsh-audiogen@0.1.0
+```
+
+本地开发安装：
+
 ```bash
 dsh plugin --profile web add /path/to/dsh-audiogen
-# 或从本地构建后的 tarball / npm 安装
 ```
 
 安装后重启 `dsh web`，侧边栏出现「AI 音频」。打开「设置 → 插件 → AI 音频」，添加一个厂商渠道并填写 API 地址、密钥、模型/音色后即可使用。
