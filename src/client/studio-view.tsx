@@ -121,6 +121,8 @@ export function StudioView(props: {
   const [prompt, setPrompt] = useState('')
   const [previewText, setPreviewText] = useState('')
   const [model, setModel] = useState('')
+  // 多模型对比：同一提示词逐模型生成
+  const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [voice, setVoice] = useState('')
   const [speed, setSpeed] = useState('')
   const [duration, setDuration] = useState('')
@@ -140,8 +142,9 @@ export function StudioView(props: {
   const [audioChannel, setAudioChannel] = useState('')
   const [subtitle, setSubtitle] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [progress, setProgress] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [outputs, setOutputs] = useState<GeneratedAudio[]>([])
+  const [results, setResults] = useState<Array<{ model: string; outputs: GeneratedAudio[]; error?: string }>>([])
   // 资源库
   const [saveToLibrary, setSaveToLibrary] = useState(cfg?.autoSaveToLibrary === true)
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
@@ -170,6 +173,15 @@ export function StudioView(props: {
   }, [modelOptions.models, mode])
 
   useEffect(() => {
+    if (visibleModels.length === 0) return
+    setSelectedModels(current => {
+      const valid = current.filter(item => visibleModels.includes(item))
+      if (valid.length > 0) return valid
+      return [visibleModels[0]!]
+    })
+  }, [visibleModels])
+
+  useEffect(() => {
     if (visibleModels.length > 0 && !visibleModels.includes(model)) {
       setModel(visibleModels[0]!)
     }
@@ -180,7 +192,10 @@ export function StudioView(props: {
     if (reuse === undefined || reuse === null) return
     setMode(reuse.mode)
     if (reuse.voiceId !== undefined || reuse.voice !== undefined) setVoice(reuse.voiceId ?? reuse.voice ?? '')
-    if (reuse.model !== undefined && reuse.model !== '') setModel(reuse.model)
+    if (reuse.model !== undefined && reuse.model !== '') {
+      setModel(reuse.model)
+      setSelectedModels([reuse.model])
+    }
   }, [reuse?.nonce])
 
   const submit = async (): Promise<void> => {
@@ -188,49 +203,78 @@ export function StudioView(props: {
       setError(tt('prompt.required'))
       return
     }
+    // 待生成模型列表：音色设计单渠道；其余支持多模型（同一提示词逐一生成，供对比）。
+    const targets = mode === 'voice_design'
+      ? ['']
+      : selectedModels.length > 0
+        ? selectedModels
+        : (model !== '' ? [model] : visibleModels.length > 0 ? [visibleModels[0]!] : [])
+    if (targets.length === 0) {
+      setError('当前模式暂无可用模型')
+      return
+    }
     setLoading(true)
     setError(null)
+    setProgress('')
+    const gathered: Array<{ model: string; outputs: GeneratedAudio[]; error?: string }> = []
+    let anySaved = false
     try {
-      const response = await api.generate({
-        mode,
-        model: mode === 'voice_design' ? '' : (model || visibleModels[0]) ?? '',
-        prompt: prompt.trim(),
-        saveToLibrary,
-        ...(mode === 'voice_design' && designChannelId !== '' ? { channelId: designChannelId } : {}),
-        ...(previewText.trim() !== '' ? { previewText: previewText.trim() } : {}),
-        ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
-        ...(speed.trim() !== '' ? { speed: Number(speed) } : {}),
-        ...(duration.trim() !== '' ? { duration: Number(duration) } : {}),
-        ...(lyrics.trim() !== '' ? { lyrics: lyrics.trim() } : {}),
-        ...(instrumental ? { isInstrumental: true } : {}),
-        ...(loop ? { loop: true } : {}),
-        ...(promptInfluence.trim() !== '' ? { promptInfluence: Number(promptInfluence) } : {}),
-        ...(format.trim() !== '' ? { format: format.trim() } : {}),
-        ...(emotion.trim() !== '' ? { emotion: emotion.trim() } : {}),
-        ...(vol.trim() !== '' ? { vol: Number(vol) } : {}),
-        ...(pitch.trim() !== '' ? { pitch: Number(pitch) } : {}),
-        ...(toneText.trim() !== '' ? { pronunciationTone: toneText.split('\n').map(item => item.trim()).filter(item => item !== '') } : {}),
-        ...(sampleRate.trim() !== '' ? { sampleRate: Number(sampleRate) } : {}),
-        ...(bitrate.trim() !== '' ? { bitrate: Number(bitrate) } : {}),
-        ...(audioChannel.trim() !== '' ? { audioChannel: Number(audioChannel) } : {}),
-        ...(subtitle ? { subtitleEnable: true } : {}),
-      })
-      if (!response.ok) {
-        setError(response.message ?? '生成失败')
-        return
+      for (const [index, target] of targets.entries()) {
+        setProgress(`生成中 ${index + 1}/${targets.length}（${target || '音色设计'}）…`)
+        let response
+        try {
+          response = await api.generate({
+            mode,
+            model: target,
+            prompt: prompt.trim(),
+            saveToLibrary,
+            ...(mode === 'voice_design' && designChannelId !== '' ? { channelId: designChannelId } : {}),
+            ...(previewText.trim() !== '' ? { previewText: previewText.trim() } : {}),
+            ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
+            ...(speed.trim() !== '' ? { speed: Number(speed) } : {}),
+            ...(duration.trim() !== '' ? { duration: Number(duration) } : {}),
+            ...(lyrics.trim() !== '' ? { lyrics: lyrics.trim() } : {}),
+            ...(instrumental ? { isInstrumental: true } : {}),
+            ...(loop ? { loop: true } : {}),
+            ...(promptInfluence.trim() !== '' ? { promptInfluence: Number(promptInfluence) } : {}),
+            ...(format.trim() !== '' ? { format: format.trim() } : {}),
+            ...(emotion.trim() !== '' ? { emotion: emotion.trim() } : {}),
+            ...(vol.trim() !== '' ? { vol: Number(vol) } : {}),
+            ...(pitch.trim() !== '' ? { pitch: Number(pitch) } : {}),
+            ...(toneText.trim() !== '' ? { pronunciationTone: toneText.split('\n').map(item => item.trim()).filter(item => item !== '') } : {}),
+            ...(sampleRate.trim() !== '' ? { sampleRate: Number(sampleRate) } : {}),
+            ...(bitrate.trim() !== '' ? { bitrate: Number(bitrate) } : {}),
+            ...(audioChannel.trim() !== '' ? { audioChannel: Number(audioChannel) } : {}),
+            ...(subtitle ? { subtitleEnable: true } : {}),
+          })
+        } catch (err) {
+          gathered.push({ model: target, outputs: [], error: err instanceof Error ? err.message : String(err) })
+          continue
+        }
+        if (!response.ok) {
+          gathered.push({ model: target, outputs: [], error: response.message ?? '生成失败' })
+          continue
+        }
+        const generated = response.outputs ?? []
+        gathered.push({ model: target, outputs: generated })
+        if ((response.resources?.length ?? 0) > 0 && saveToLibrary) anySaved = true
       }
-      const generated = response.outputs ?? []
-      setOutputs(generated)
-      if ((response.resources?.length ?? 0) > 0 && saveToLibrary) {
-        setSavedIds(new Set(generated.map(item => item.id)))
+      setResults(gathered)
+      if (anySaved) {
+        setSavedIds(current => new Set([...current, ...gathered.flatMap(group => group.outputs.map(item => item.id))]))
         props.showToast('已保存到资源库')
         props.onLibraryChanged()
+      }
+      const failed = gathered.filter(group => group.error !== undefined && group.outputs.length === 0)
+      if (failed.length > 0 && failed.length === gathered.length) {
+        setError(failed.map(group => `「${group.model || '音色设计'}」${group.error}`).join('；'))
       }
       reload()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
+      setProgress('')
     }
   }
 
@@ -301,11 +345,24 @@ export function StudioView(props: {
 
         {needModel ? (
           <label className={css.label}>
-            <span>{tt('model.label')}</span>
-            <select className={css.input} value={model} onChange={event => setModel(event.target.value)}>
-              {visibleModels.length === 0 ? <option value="">（当前模式暂无可用模型）</option> : null}
-              {visibleModels.map(item => <option key={item} value={item}>{item}</option>)}
-            </select>
+            <span>{tt('model.label')}（可多选，同一提示词逐个生成以对比）</span>
+            <div className={css.modelCheckList}>
+              {visibleModels.length === 0 ? <p className={css.hint}>（当前模式暂无可用模型）</p> : null}
+              {visibleModels.map(item => (
+                <label key={item} className={css.checkbox}>
+                  <input
+                    type="checkbox"
+                    checked={selectedModels.includes(item)}
+                    onChange={event => {
+                      const checked = event.target.checked
+                      setSelectedModels(current => checked ? [...new Set([...current, item])] : current.filter(alias => alias !== item))
+                      if (checked && (model === '' || !visibleModels.includes(model))) setModel(item)
+                    }}
+                  />
+                  <span title="点击生成对比">{item}</span>
+                </label>
+              ))}
+            </div>
           </label>
         ) : null}
 
@@ -448,13 +505,13 @@ export function StudioView(props: {
 
         {!connected && <p className={css.hint}>{tt('config.missing')}</p>}
         <button type="button" className={css.generate} disabled={loading || !connected || (needModel && visibleModels.length === 0)} onClick={() => void submit()}>
-          {loading ? tt('generating') : tt('generate')}
+          {loading ? (progress !== '' ? progress : tt('generating')) : tt('generate')}
         </button>
       </div>
 
       <div className={css.resultCol}>
         {error !== null ? <p className={css.error}>{error}</p> : null}
-        {outputs.length === 0 ? (
+        {results.length === 0 ? (
           <div className={css.resultEmpty}>
             <span className={css.resultEmptyIcon}>🎵</span>
             <p>{tt('result.empty')}</p>
@@ -463,59 +520,72 @@ export function StudioView(props: {
         ) : (
           <>
             <div className={css.resultMeta}>
-              <span>{tt('result.done', { count: outputs.length })}</span>
+              <span>{tt('result.done', { count: results.reduce((sum, group) => sum + group.outputs.length, 0) })}</span>
               <span className={css.resultModeChip}>{modeLabel}</span>
             </div>
-            <div className={css.audioList}>
-              {outputs.map((audio, index) => {
-                const saved = savedIds.has(audio.id)
-                return (
-                  <div className={css.audioCard} key={audio.id} data-saved={saved ? 'true' : 'false'}>
-                    <div className={css.audioCardHead}>
-                      {audio.voiceId !== undefined ? <span className={css.voiceIdChip} title="新音色 ID">新音色 {audio.voiceId}</span> : null}
-                      {saved ? (
-                        <span className={css.savedChip}><CheckIcon /> 已入库</span>
-                      ) : null}
-                      <span className={css.audioCardIndex}>#{index + 1}</span>
-                    </div>
-                    <AudioPlayer src={dataUrlOf(audio)} itemKey={audio.id} />
-                    <div className={css.audioCardActions}>
-                      <a className={css.ghostButton} href={dataUrlOf(audio)} download={`generated-${index + 1}.${audio.mime.split('/')[1]?.replace('mpeg', 'mp3') ?? 'mp3'}`}>
-                        <DownloadIcon /> 下载
-                      </a>
-                      {saved ? (
-                        <button type="button" className={css.ghostButton} onClick={() => props.showToast('该音频已加入资源库')}>
-                          <CheckIcon /> 已入库
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className={css.ghostButton}
-                          onClick={() => openSaveDialog([audio], {
-                            mode,
-                            prompt: prompt.trim(),
-                            ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
-                            ...(audio.voiceId === undefined ? {} : { voiceId: audio.voiceId }),
-                            ...(model !== '' ? { model } : {}),
-                            ...(channels.length > 0 ? { channel: channels.find(candidate => candidate.id === (mode === 'voice_design' ? designChannelId : modelOptions.defaultChannelId))?.name ?? channels[0]?.name ?? '' } : {}),
-                            params: {
-                              mode,
-                              model: mode === 'voice_design' ? '' : (model || visibleModels[0]) ?? '',
-                              prompt: prompt.trim(),
-                              ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
-                              ...(speed.trim() !== '' ? { speed: Number(speed) } : {}),
-                              ...(duration.trim() !== '' ? { duration: Number(duration) } : {}),
-                              ...(format.trim() !== '' ? { format: format.trim() } : {}),
-                            },
-                          })}
-                        >
-                          <StarIcon /> 加入资源库
-                        </button>
-                      )}
-                    </div>
+            <div className={css.resultGroups}>
+              {results.map((group, groupIndex) => (
+                <div className={css.resultGroup} key={`${group.model}-${groupIndex}`}>
+                  <div className={css.resultGroupHead}>
+                    <span className={css.resultGroupChip}>{group.model || '音色设计'}</span>
+                    {group.error !== undefined ? <span className={css.resultGroupError}>生成失败：{group.error}</span> : null}
+                    {group.outputs.length > 0 ? <span className={css.resultGroupCount}>{group.outputs.length} 段</span> : null}
                   </div>
-                )
-              })}
+                  {group.outputs.length > 0 ? (
+                    <div className={css.audioList}>
+                      {group.outputs.map((audio, index) => {
+                        const saved = savedIds.has(audio.id)
+                        return (
+                          <div className={css.audioCard} key={audio.id} data-saved={saved ? 'true' : 'false'}>
+                            <div className={css.audioCardHead}>
+                              {audio.voiceId !== undefined ? <span className={css.voiceIdChip} title="新音色 ID">新音色 {audio.voiceId}</span> : null}
+                              {saved ? (
+                                <span className={css.savedChip}><CheckIcon /> 已入库</span>
+                              ) : null}
+                              <span className={css.audioCardIndex}>#{index + 1}</span>
+                            </div>
+                            <AudioPlayer src={dataUrlOf(audio)} itemKey={audio.id} />
+                            <div className={css.audioCardActions}>
+                              <a className={css.ghostButton} href={dataUrlOf(audio)} download={`generated-${groupIndex + 1}-${index + 1}.${audio.mime.split('/')[1]?.replace('mpeg', 'mp3') ?? 'mp3'}`}>
+                                <DownloadIcon /> 下载
+                              </a>
+                              {saved ? (
+                                <button type="button" className={css.ghostButton} onClick={() => props.showToast('该音频已加入资源库')}>
+                                  <CheckIcon /> 已入库
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={css.ghostButton}
+                                  onClick={() => openSaveDialog([audio], {
+                                    mode,
+                                    prompt: prompt.trim(),
+                                    ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
+                                    ...(audio.voiceId === undefined ? {} : { voiceId: audio.voiceId }),
+                                    ...(group.model !== '' ? { model: group.model } : {}),
+                                    ...(channels.length > 0 ? { channel: channels.find(candidate => candidate.id === (mode === 'voice_design' ? designChannelId : modelOptions.defaultChannelId))?.name ?? channels[0]?.name ?? '' } : {}),
+                                    params: {
+                                      mode,
+                                      model: mode === 'voice_design' ? '' : group.model,
+                                      prompt: prompt.trim(),
+                                      ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
+                                      ...(speed.trim() !== '' ? { speed: Number(speed) } : {}),
+                                      ...(duration.trim() !== '' ? { duration: Number(duration) } : {}),
+                                      ...(format.trim() !== '' ? { format: format.trim() } : {}),
+                                    },
+                                  })}
+                                >
+                                  <StarIcon /> 加入资源库
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
             </div>
           </>
         )}

@@ -805,3 +805,55 @@
 @media (prefers-reduced-motion: reduce) {
   .toast { animation-duration: 1ms; }
 }
+
+/* 多模型对比 */
+.modelCheckList {
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-border-l2, #d1d5db);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3, #fff);
+}
+
+.resultGroups {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.resultGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.resultGroupHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.resultGroupChip {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-hover, #f3f4f6);
+  border: 1px solid var(--dsw-alias-border-l2, #d1d5db);
+  color: var(--dsw-alias-label-primary, #1f2328);
+}
+
+.resultGroupError {
+  font-size: 12px;
+  color: #dc2626;
+}
+
+.resultGroupCount {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+}
