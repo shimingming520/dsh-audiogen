@@ -62,9 +62,32 @@
     "type": "git",
     "url": "git+https://github.com/shimingming520/dsh-audiogen.git"
   },
+  "homepage": "https://github.com/shimingming520/dsh-audiogen",
+  "bugs": {
+    "url": "https://github.com/shimingming520/dsh-audiogen/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "audio",
+    "tts",
+    "music",
+    "sfx",
+    "elevenlabs",
+    "minimax",
+    "stability"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsdown",
     "watch": "tsdown --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run typecheck && pnpm run build"
   }
 }
