@@ -278,6 +278,37 @@ async function elevenLabs(channel: AudioChannel, request: GenerateAudioRequest, 
     return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
   }
 
+  // ------------- ElevenLabs Sound Effects（POST /v1/sound-generation） -------------
+  // 官方模型：eleven_text_to_sound_v2；text 必填；duration_seconds 0.5-30；
+  // loop 仅该模型可用；prompt_influence 0-1（默认 0.3）。
+  if (request.mode === 'sfx') {
+    const endpoint = `${base}/sound-generation`
+    const sfxModel = (request.upstream ?? request.model) || 'eleven_text_to_sound_v2'
+    const body: Record<string, unknown> = {
+      text: request.prompt,
+      model_id: sfxModel,
+      ...(request.duration !== undefined && Number.isFinite(request.duration)
+        ? { duration_seconds: Math.min(30, Math.max(0.5, request.duration)) }
+        : {}),
+      ...(request.loop !== undefined ? { loop: request.loop } : {}),
+      ...(request.promptInfluence !== undefined && Number.isFinite(request.promptInfluence)
+        ? { prompt_influence: Math.min(1, Math.max(0, request.promptInfluence)) }
+        : {}),
+    }
+    const response = await fetchWithTimeout(endpoint, {
+      method: 'POST',
+      redirect: 'follow',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    }, UPSTREAM_TIMEOUT_MS)
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new AudioGenError(`ElevenLabs sound effects API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
+    }
+    return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+  }
+
   const voiceId = (request.voice ?? request.model ?? model).trim()
   const endpoint = `${base}/text-to-speech/${encodeURIComponent(voiceId)}`
   const body: Record<string, unknown> = {

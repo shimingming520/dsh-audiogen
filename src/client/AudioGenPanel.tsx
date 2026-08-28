@@ -62,6 +62,9 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
   const [duration, setDuration] = useState('')
   const [lyrics, setLyrics] = useState('')
   const [instrumental, setInstrumental] = useState(false)
+  // ElevenLabs 音效参数
+  const [loop, setLoop] = useState(false)
+  const [promptInfluence, setPromptInfluence] = useState('')
   const [format, setFormat] = useState('mp3')
   // MiniMax TTS 高级参数（其他厂商忽略）
   const [emotion, setEmotion] = useState('')
@@ -113,6 +116,8 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
         ...(duration.trim() !== '' ? { duration: Number(duration) } : {}),
         ...(lyrics.trim() !== '' ? { lyrics: lyrics.trim() } : {}),
         ...(instrumental ? { isInstrumental: true } : {}),
+        ...(loop ? { loop: true } : {}),
+        ...(promptInfluence.trim() !== '' ? { promptInfluence: Number(promptInfluence) } : {}),
         ...(format.trim() !== '' ? { format: format.trim() } : {}),
         ...(emotion.trim() !== '' ? { emotion: emotion.trim() } : {}),
         ...(vol.trim() !== '' ? { vol: Number(vol) } : {}),
@@ -254,6 +259,19 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
               <span>{tt('duration.label')}</span>
               <input className={css.input} type="number" step="1" min="1" max="120" value={duration} onChange={event => setDuration(event.target.value)} placeholder="30" />
             </label>
+          ) : null}
+
+          {mode === 'sfx' ? (
+            <>
+              <label className={css.checkbox}>
+                <input type="checkbox" checked={loop} onChange={event => setLoop(event.target.checked)} />
+                <span>循环音效 loop（无缝循环，需 eleven_text_to_sound_v2）</span>
+              </label>
+              <label className={css.label}>
+                <span>提示词影响度 prompt_influence (0-1)</span>
+                <input className={css.input} type="number" step="0.1" min="0" max="1" value={promptInfluence} onChange={event => setPromptInfluence(event.target.value)} placeholder="0.3" />
+              </label>
+            </>
           ) : null}
 
           {mode === 'music' ? (

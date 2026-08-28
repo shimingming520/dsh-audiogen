@@ -111,6 +111,8 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       duration: { type: 'number', description: 'Requested duration in seconds for music/sfx.' },
       lyrics: { type: 'string', description: 'Lyrics for music generation (MiniMax music-3.0/music-cover). Required unless is_instrumental is true. Split verses with an empty line.' },
       is_instrumental: { type: 'boolean', description: 'Generate purely instrumental music without vocals/lyrics (MiniMax is_instrumental). When true, lyrics may be omitted.' },
+      loop: { type: 'boolean', description: 'Create a seamlessly looping sound effect (ElevenLabs sound generation loop, only for eleven_text_to_sound_v2).' },
+      prompt_influence: { type: 'number', description: 'Sound effect prompt influence 0-1 (ElevenLabs prompt_influence, default 0.3): higher follows the prompt more closely, lower is more variable.' },
       format: { type: 'string', description: 'Output format such as mp3 or wav. MiniMax music supports mp3/wav/pcm.' },
       // ---- MiniMax TTS only (ignored by other providers) ----
       emotion: { type: 'string', description: 'MiniMax TTS emotion, e.g. happy/sad/angry/nervous/fearful/bored (voice_setting.emotion).' },
@@ -199,6 +201,8 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
         ...(typeof args.duration === 'number' ? { duration: args.duration } : {}),
         ...(typeof args.lyrics === 'string' && args.lyrics.trim() !== '' ? { lyrics: args.lyrics.trim() } : {}),
         ...(typeof args.is_instrumental === 'boolean' ? { isInstrumental: args.is_instrumental } : {}),
+        ...(typeof args.loop === 'boolean' ? { loop: args.loop } : {}),
+        ...(typeof args.prompt_influence === 'number' && Number.isFinite(args.prompt_influence) ? { promptInfluence: args.prompt_influence } : {}),
         ...(typeof args.format === 'string' && args.format.trim() !== '' ? { format: args.format.trim() } : {}),
         // ---- MiniMax TTS 专属字段 ----
         ...(typeof args.emotion === 'string' && args.emotion.trim() !== '' ? { emotion: args.emotion.trim() } : {}),

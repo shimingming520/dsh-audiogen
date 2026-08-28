@@ -65,6 +65,8 @@ export const AUDIO_PRESETS: AudioPresetProvider[] = [
       // ElevenLabs Music（POST /v1/music）
       { alias: 'music_v2', id: 'music_v2', category: 'music' },
       { alias: 'music_v1', id: 'music_v1', category: 'music' },
+      // ElevenLabs Sound Effects（POST /v1/sound-generation）
+      { alias: 'eleven_text_to_sound_v2', id: 'eleven_text_to_sound_v2', category: 'sfx' },
     ],
   },
   {

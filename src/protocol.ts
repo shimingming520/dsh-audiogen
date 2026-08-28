@@ -118,6 +118,10 @@ export interface GenerateAudioRequest {
   lyrics?: string
   /** MiniMax 是否生成纯音乐（无歌词/人声）；true 时 lyrics 可为空。 */
   isInstrumental?: boolean
+  /** ElevenLabs 音效：生成无缝循环音效（loop，仅 eleven_text_to_sound_v2）。 */
+  loop?: boolean
+  /** ElevenLabs 音效：提示词影响度 0-1（prompt_influence，默认 0.3）。 */
+  promptInfluence?: number
   /** Output format, e.g. mp3, wav, pcm. */
   format?: string
   /** Channel this request targets (host falls back to default). */
