@@ -1,7 +1,7 @@
 {
   "name": "dsh-audiogen",
   "description": "AI audio generation plugin for the dsh web GUI: multi-vendor TTS/music/sound-effect channels (OpenAI-compatible, ElevenLabs, MiniMax, Stability AI and custom), per-channel model/voice catalogs, Agent tool and a sidebar AI 音频 panel.",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
