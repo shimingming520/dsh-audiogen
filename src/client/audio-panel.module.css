@@ -1122,3 +1122,14 @@
   flex-direction: column;
   gap: 4px;
 }
+
+.overrideOnly {
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+  font-weight: 500;
+}
+
+.overrideDash {
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+  padding: 0 6px;
+}

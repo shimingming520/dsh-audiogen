@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AudiogenApi } from './api.ts'
 import type { AudiogenConfig, AudiogenScope } from './settings-scope.ts'
 import { audioModelOptions } from './settings-scope.ts'
+import { globalFieldSpecs, overrideRowSpecs, presetLabel, type FieldSpec } from './field-specs.ts'
 import { tt } from './helpers.ts'
 import {
   HISTORY_API,
@@ -50,21 +51,6 @@ interface StudioTask {
   groups: CompareResult[]
   error?: string
 }
-
-/** 每模型可覆盖的参数行（留空 = 自动，沿用上方全局配置）。 */
-const OVERRIDE_ROWS: Array<{ key: string; label: string; type: 'text' | 'number' | 'select'; options?: string[]; placeholder?: string }> = [
-  { key: 'format', label: '输出格式', type: 'select', options: ['mp3', 'wav', 'pcm', 'flac', 'ogg'], placeholder: '自动' },
-  { key: 'duration', label: '时长(秒)', type: 'number', placeholder: '自动' },
-  { key: 'voice', label: '音色', type: 'text', placeholder: '自动' },
-  { key: 'speed', label: '语速', type: 'number', placeholder: '自动' },
-  { key: 'emotion', label: '情绪', type: 'text', placeholder: '自动' },
-  { key: 'sample_rate', label: '采样率', type: 'number', placeholder: '自动' },
-  { key: 'bitrate', label: '码率', type: 'number', placeholder: '自动' },
-  { key: 'lyrics', label: '歌词', type: 'text', placeholder: '自动' },
-  { key: 'seed', label: 'seed', type: 'number', placeholder: '自动' },
-  { key: 'steps', label: 'steps', type: 'number', placeholder: '自动' },
-  { key: 'cfg_scale', label: 'cfg_scale', type: 'number', placeholder: '自动' },
-]
 
 /** 每模型覆盖值 → 请求字段的数值/类型转换（空值跳过）。 */
 function overrideSpread(override: Record<string, string>): Partial<GenerateAudioRequest> {
@@ -236,6 +222,10 @@ export function StudioView(props: {
   const [bitrate, setBitrate] = useState('')
   const [audioChannel, setAudioChannel] = useState('')
   const [subtitle, setSubtitle] = useState(false)
+  // Stable Audio 参数（仅 Stability 渠道显示）
+  const [seed, setSeed] = useState('')
+  const [steps, setSteps] = useState('')
+  const [cfgScale, setCfgScale] = useState('')
   const [error, setError] = useState<string | null>(null)
   // 任务列表：提交即建任务，非阻塞；可同时存在多个进行中的任务。
   const [tasks, setTasks] = useState<StudioTask[]>([])
@@ -275,6 +265,44 @@ export function StudioView(props: {
       .filter(entry => entry.category === undefined || entry.category === 'tts' && mode === 'tts' || entry.category === mode)
       .map(entry => entry.alias)
   }, [modelOptions.models, mode])
+
+  // 当前模型所属渠道 preset（单模型模式）；对比模式为所选模型渠道集合。
+  const currentPreset = useMemo(() => {
+    if (mode === 'voice_design') return channels.find(candidate => candidate.id === designChannelId)?.preset ?? ''
+    const picked = modelOptions.models.find(entry => entry.alias === model) ?? modelOptions.models.find(entry => entry.alias === (visibleModels[0] ?? ''))
+    return picked?.preset ?? ''
+  }, [mode, model, visibleModels, modelOptions.models, channels, designChannelId])
+
+  const fieldPresets = useMemo(() => {
+    if (mode === 'voice_design') return []
+    if (compareMode) {
+      const presets: string[] = []
+      for (const alias of compareModels) {
+        const entry = modelOptions.models.find(candidate => candidate.alias === alias)
+        if (entry !== undefined && !presets.includes(entry.preset)) presets.push(entry.preset)
+      }
+      if (presets.length === 0) return [currentPreset].filter(value => value !== '')
+      return presets
+    }
+    return [currentPreset].filter(value => value !== '')
+  }, [mode, compareMode, compareModels, modelOptions.models, currentPreset])
+
+  // 按（模式 × 渠道集合）计算全局字段：对比模式只留共有字段，独有字段在覆盖矩阵中。
+  const globalSpecs = useMemo(() => globalFieldSpecs(mode, fieldPresets), [mode, fieldPresets])
+
+  // 模型下拉按渠道分组。
+  const groupedModels = useMemo(() => {
+    const groups: Array<{ channelId: string; channelName: string; models: Array<{ alias: string }> }> = []
+    for (const entry of modelOptions.models) {
+      let group = groups.find(candidate => candidate.channelId === entry.channelId)
+      if (group === undefined) {
+        group = { channelId: entry.channelId, channelName: entry.channelName, models: [] }
+        groups.push(group)
+      }
+      group.models.push({ alias: entry.alias })
+    }
+    return groups.map(group => ({ ...group, models: group.models.filter(entry => visibleModels.includes(entry.alias)) })).filter(group => group.models.length > 0)
+  }, [modelOptions.models, visibleModels])
 
   useEffect(() => {
     if (visibleModels.length > 0 && !visibleModels.includes(model)) {
@@ -330,6 +358,9 @@ export function StudioView(props: {
     ...(bitrate.trim() !== '' ? { bitrate: Number(bitrate) } : {}),
     ...(audioChannel.trim() !== '' ? { audioChannel: Number(audioChannel) } : {}),
     ...(subtitle ? { subtitleEnable: true } : {}),
+    ...(seed.trim() !== '' ? { seed: Number(seed) } : {}),
+    ...(steps.trim() !== '' ? { steps: Number(steps) } : {}),
+    ...(cfgScale.trim() !== '' ? { cfgScale: Number(cfgScale) } : {}),
   })
 
   const applyResponse = (response: Awaited<ReturnType<AudiogenApi['generate']>>): GeneratedAudio[] => {
@@ -470,6 +501,152 @@ export function StudioView(props: {
 
   const openSaveDialog = (files: GeneratedAudio[], context: SaveDialogContext): void => {
     setSaveDialog({ files, context })
+  }
+
+  /** 按字段规格渲染一个表单控件（渠道/模式感知：字段集由 globalSpecs 决定）。 */
+  const renderField = (spec: FieldSpec): React.JSX.Element => {
+    const common = { className: css.input, disabled: false }
+    switch (spec.key) {
+      case 'voice':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <input className={css.input} value={voice} onChange={event => setVoice(event.target.value)} placeholder={currentPreset === 'minimax' ? 'male-qn-qingse / female-shaonv' : 'alloy / 自定义音色'} />
+          </label>
+        )
+      case 'speed':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <input className={css.input} type="number" step={spec.step ?? 0.1} min={spec.min} max={spec.max} value={speed} onChange={event => setSpeed(event.target.value)} placeholder={spec.placeholder} />
+          </label>
+        )
+      case 'duration':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <input className={css.input} type="number" step={spec.step ?? 1} min={spec.min} max={spec.max} value={duration} onChange={event => setDuration(event.target.value)} placeholder={spec.placeholder} />
+          </label>
+        )
+      case 'format':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <select className={css.input} value={format} onChange={event => setFormat(event.target.value)}>
+              {(spec.options ?? ['mp3', 'wav', 'pcm']).map(option => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </label>
+        )
+      case 'lyrics':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <textarea className={css.textarea} value={lyrics} onChange={event => setLyrics(event.target.value)} placeholder={'第一段歌词…\n\n第二段歌词…'} />
+          </label>
+        )
+      case 'instrumental':
+        return (
+          <label className={css.checkbox} key={spec.key} title={spec.hint}>
+            <input type="checkbox" checked={instrumental} onChange={event => setInstrumental(event.target.checked)} />
+            <span>{spec.label}（是：{currentPreset === 'elevenlabs' ? 'force_instrumental' : 'is_instrumental'}）</span>
+          </label>
+        )
+      case 'sampleRate':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <select className={css.input} value={sampleRate} onChange={event => setSampleRate(event.target.value)}>
+              <option value="">默认（44100）</option>
+              {(spec.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </label>
+        )
+      case 'bitrate':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <select className={css.input} value={bitrate} onChange={event => setBitrate(event.target.value)}>
+              <option value="">默认（256000）</option>
+              {(spec.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </label>
+        )
+      case 'audioChannel':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <select className={css.input} value={audioChannel} onChange={event => setAudioChannel(event.target.value)}>
+              <option value="">默认(1)</option>
+              <option value="1">1</option>
+              <option value="2">2</option>
+            </select>
+          </label>
+        )
+      case 'emotion':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <input className={css.input} value={emotion} onChange={event => setEmotion(event.target.value)} placeholder={spec.placeholder} />
+          </label>
+        )
+      case 'vol':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <input className={css.input} type="number" min={spec.min} max={spec.max} step={spec.step ?? 0.5} value={vol} onChange={event => setVol(event.target.value)} placeholder={spec.placeholder} />
+          </label>
+        )
+      case 'pitch':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <input className={css.input} type="number" min={spec.min} max={spec.max} value={pitch} onChange={event => setPitch(event.target.value)} placeholder={spec.placeholder} />
+          </label>
+        )
+      case 'toneText':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <textarea className={css.textarea} value={toneText} onChange={event => setToneText(event.target.value)} placeholder={spec.placeholder} />
+          </label>
+        )
+      case 'subtitle':
+        return (
+          <label className={css.checkbox} key={spec.key} title={spec.hint}>
+            <input type="checkbox" checked={subtitle} onChange={event => setSubtitle(event.target.checked)} />
+            <span>{spec.label}</span>
+          </label>
+        )
+      case 'loop':
+        return (
+          <label className={css.checkbox} key={spec.key} title={spec.hint}>
+            <input type="checkbox" checked={loop} onChange={event => setLoop(event.target.checked)} />
+            <span>{spec.label}</span>
+          </label>
+        )
+      case 'promptInfluence':
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <input className={css.input} type="number" step={spec.step ?? 0.1} min={spec.min} max={spec.max} value={promptInfluence} onChange={event => setPromptInfluence(event.target.value)} placeholder={spec.placeholder} />
+          </label>
+        )
+      case 'seed':
+      case 'steps':
+      case 'cfgScale': {
+        const value = spec.key === 'seed' ? seed : spec.key === 'steps' ? steps : cfgScale
+        const setter = spec.key === 'seed' ? setSeed : spec.key === 'steps' ? setSteps : setCfgScale
+        // 覆盖矩阵中的数字输入用统一 state（cfgScale 入参键 cfg_scale）。
+        return (
+          <label className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <input {...common} type="number" step={spec.step ?? 1} min={spec.min} max={spec.max} value={String(value)} placeholder={spec.placeholder} onChange={event => setter(event.target.value)} />
+          </label>
+        )
+      }
+      default:
+        return <span key={spec.key}>{spec.label}</span>
+    }
   }
 
   const onDialogSaved = (entry: LibraryEntry): void => {
@@ -663,10 +840,18 @@ export function StudioView(props: {
                     <span className={`${css.overrideCell} ${css.overrideCellHead}`} />
                     {compareModels.map(item => <span key={item} className={`${css.overrideCell} ${css.overrideCellHead}`}>{item}</span>)}
                   </div>
-                  {OVERRIDE_ROWS.map(row => (
+                  {overrideRowSpecs(mode).map(row => (
                     <div key={row.key} className={css.overrideRow}>
-                      <span className={css.overrideCell} title={row.label}>{row.label}</span>
+                      <span className={css.overrideCell} title={`${row.hint ?? ''}${row.presets.length < 3 ? `（适用：${row.presets.map(presetLabel).join('/')}）` : ''}`}>
+                        {row.label}
+                        {row.presets.length < 3 ? <span className={css.overrideOnly}> 仅{row.presets.map(presetLabel).join('/')}</span> : null}
+                      </span>
                       {compareModels.map(item => {
+                        const entry = modelOptions.models.find(candidate => candidate.alias === item)
+                        const applicable = entry !== undefined && row.presets.includes(entry.preset)
+                        if (!applicable) {
+                          return <span key={item} className={css.overrideCell}><span className={css.overrideDash}>—</span></span>
+                        }
                         const value = overrides[item]?.[row.key] ?? ''
                         return (
                           <span key={item} className={css.overrideCell}>
@@ -707,142 +892,23 @@ export function StudioView(props: {
               <span>{tt('model.label')}</span>
               <select className={css.input} value={model} onChange={event => setModel(event.target.value)}>
                 {visibleModels.length === 0 ? <option value="">（当前模式暂无可用模型）</option> : null}
-                {visibleModels.map(item => <option key={item} value={item}>{item}</option>)}
+                {groupedModels.map(group => (
+                  <optgroup key={group.channelId} label={group.channelName}>
+                    {group.models.map(item => <option key={item.alias} value={item.alias}>{item.alias}</option>)}
+                  </optgroup>
+                ))}
               </select>
             </label>
           )
         ) : null}
 
-        {mode === 'tts' ? (
-          <label className={css.label}>
-            <span>{tt('voice.label')}</span>
-            <input className={css.input} value={voice} onChange={event => setVoice(event.target.value)} placeholder={isMiniMaxChannel ? 'male-qn-qingse / female-shaonv' : 'alloy / 自定义音色'} />
-          </label>
-        ) : null}
+        {globalSpecs.filter(spec => spec.advanced !== true).map(spec => renderField(spec))}
 
-        {mode === 'tts' ? (
-          <label className={css.label}>
-            <span>{tt('speed.label')}</span>
-            <input className={css.input} type="number" step="0.1" min="0.5" max="2" value={speed} onChange={event => setSpeed(event.target.value)} placeholder="1.0" />
-          </label>
-        ) : null}
-
-        {mode === 'tts' && isMiniMaxChannel ? (
+        {mode === 'tts' && globalSpecs.some(spec => spec.advanced === true) ? (
           <details className={css.advanced}>
             <summary>MiniMax 高级参数</summary>
-            <label className={css.label}>
-              <span>情绪 emotion</span>
-              <input className={css.input} value={emotion} onChange={event => setEmotion(event.target.value)} placeholder="happy / sad / angry / nervous…" />
-            </label>
-            <div className={css.row}>
-              <label className={css.label}>
-                <span>音量 vol (0-10)</span>
-                <input className={css.input} type="number" min="0" max="10" step="0.5" value={vol} onChange={event => setVol(event.target.value)} placeholder="1" />
-              </label>
-              <label className={css.label}>
-                <span>音调 pitch (-12~12)</span>
-                <input className={css.input} type="number" min="-12" max="12" value={pitch} onChange={event => setPitch(event.target.value)} placeholder="0" />
-              </label>
-            </div>
-            <div className={css.row}>
-              <label className={css.label}>
-                <span>采样率</span>
-                <input className={css.input} type="number" min="16000" max="48000" step="8000" value={sampleRate} onChange={event => setSampleRate(event.target.value)} placeholder="32000" />
-              </label>
-              <label className={css.label}>
-                <span>码率 bps</span>
-                <input className={css.input} type="number" min="64000" max="320000" step="8000" value={bitrate} onChange={event => setBitrate(event.target.value)} placeholder="128000" />
-              </label>
-              <label className={css.label}>
-                <span>声道</span>
-                <select className={css.input} value={audioChannel} onChange={event => setAudioChannel(event.target.value)}>
-                  <option value="">默认(1)</option>
-                  <option value="1">1</option>
-                  <option value="2">2</option>
-                </select>
-              </label>
-            </div>
-            <label className={css.label}>
-              <span>发音词典（每行一条："文字/读音"）</span>
-              <textarea className={css.textarea} value={toneText} onChange={event => setToneText(event.target.value)} placeholder={'处理/(chu3)(li3)\n危险/dangerous'} />
-            </label>
-            <label className={css.checkbox}>
-              <input type="checkbox" checked={subtitle} onChange={event => setSubtitle(event.target.checked)} />
-              <span>生成字幕 subtitle_enable</span>
-            </label>
+            {globalSpecs.filter(spec => spec.advanced === true).map(spec => renderField(spec))}
           </details>
-        ) : null}
-
-        {mode === 'music' || mode === 'sfx' ? (
-          <label className={css.label}>
-            <span>{tt('duration.label')}</span>
-            <input className={css.input} type="number" step="1" min="1" max="120" value={duration} onChange={event => setDuration(event.target.value)} placeholder="30" />
-          </label>
-        ) : null}
-
-        {mode === 'sfx' ? (
-          <>
-            <label className={css.checkbox}>
-              <input type="checkbox" checked={loop} onChange={event => setLoop(event.target.checked)} />
-              <span>循环音效 loop（无缝循环，需 eleven_text_to_sound_v2）</span>
-            </label>
-            <label className={css.label}>
-              <span>提示词影响度 prompt_influence (0-1)</span>
-              <input className={css.input} type="number" step="0.1" min="0" max="1" value={promptInfluence} onChange={event => setPromptInfluence(event.target.value)} placeholder="0.3" />
-            </label>
-          </>
-        ) : null}
-
-        {mode === 'music' ? (
-          <>
-            <label className={css.label}>
-              <span>歌词（纯音乐模式可留空；多段用空行分隔）</span>
-              <textarea className={css.textarea} value={lyrics} onChange={event => setLyrics(event.target.value)} placeholder={'第一段歌词…\n\n第二段歌词…'} />
-            </label>
-            <label className={css.checkbox}>
-              <input type="checkbox" checked={instrumental} onChange={event => setInstrumental(event.target.checked)} />
-              <span>纯音乐（无歌词/人声）is_instrumental</span>
-            </label>
-            <div className={css.row}>
-              <label className={css.label}>
-                <span>采样率</span>
-                <select className={css.input} value={sampleRate} onChange={event => setSampleRate(event.target.value)}>
-                  <option value="">默认（44100）</option>
-                  <option value="16000">16000</option>
-                  <option value="24000">24000</option>
-                  <option value="32000">32000</option>
-                  <option value="44100">44100</option>
-                </select>
-              </label>
-              <label className={css.label}>
-                <span>码率 bps</span>
-                <select className={css.input} value={bitrate} onChange={event => setBitrate(event.target.value)}>
-                  <option value="">默认（256000）</option>
-                  <option value="32000">32000</option>
-                  <option value="64000">64000</option>
-                  <option value="128000">128000</option>
-                  <option value="256000">256000</option>
-                </select>
-              </label>
-            </div>
-          </>
-        ) : null}
-
-        {needModel ? (
-          <label className={css.label}>
-            <span>{tt('format.label')}</span>
-            <select className={css.input} value={format} onChange={event => setFormat(event.target.value)}>
-              <option value="mp3">mp3</option>
-              <option value="wav">wav</option>
-              {mode === 'tts' ? (
-                <>
-                  <option value="flac">flac</option>
-                  <option value="ogg">ogg</option>
-                </>
-              ) : null}
-              <option value="pcm">pcm</option>
-            </select>
-          </label>
         ) : null}
 
         <label className={css.checkbox} title="生成完成后自动保存到资源库；也可在设置中开启全部自动保存">

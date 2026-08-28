@@ -271,8 +271,17 @@ export function bindAudiogenScope(fetchFn: typeof fetch = fetch): AudiogenScope 
  * Falls back to the legacy flat allow-list while no channels exist (upgrade
  * path). Pure projection — no host calls.
  */
+export interface ModelOption {
+  alias: string
+  category?: AudioModelCategory
+  /** 所属渠道 id/名称/preset（面板按渠道渲染参数与分组下拉）。 */
+  channelId: string
+  channelName: string
+  preset: string
+}
+
 export function audioModelOptions(config: AudiogenConfig | undefined): {
-  models: Array<{ alias: string; category?: AudioModelCategory }>
+  models: ModelOption[]
   defaultChannelId?: string
 } {
   const channels = config?.channels ?? []
@@ -283,14 +292,20 @@ export function audioModelOptions(config: AudiogenConfig | undefined): {
     ? config.defaultChannelId
     : channels[0]!.id
   const ordered = [defaultId, ...channels.filter(channel => channel.id !== defaultId).map(channel => channel.id)]
-  const models: Array<{ alias: string; category?: AudioModelCategory }> = []
+  const models: ModelOption[] = []
   const seen = new Set<string>()
   for (const id of ordered) {
     const channel = channels.find(candidate => candidate.id === id)!
     for (const model of channel.models) {
       if (model.alias === '' || seen.has(model.alias)) continue
       seen.add(model.alias)
-      models.push({ alias: model.alias, ...(model.category === undefined ? {} : { category: model.category }) })
+      models.push({
+        alias: model.alias,
+        ...(model.category === undefined ? {} : { category: model.category }),
+        channelId: channel.id,
+        channelName: channel.name,
+        preset: channel.preset,
+      })
     }
   }
   return models.length > 0 ? { models, defaultChannelId: defaultId } : { models: [], defaultChannelId: defaultId }
