@@ -8,7 +8,7 @@
 export const AUDIOGEN_SETTINGS_NAMESPACE = 'dsh-audiogen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '0.2.0'
+export const PLUGIN_VERSION = '0.3.0'
 
 /** Same-origin route family (loopback-only, mirroring dsh-imagegen). */
 export const SETTINGS_API = {
@@ -45,7 +45,7 @@ export const HISTORY_API = {
 export const HISTORY_MAX = 50
 
 /** Audio generation modes. */
-export type AudioMode = 'tts' | 'music' | 'sfx'
+export type AudioMode = 'tts' | 'music' | 'sfx' | 'voice_design'
 
 /** The capability category of an audio model/voice. */
 export type AudioModelCategory =
@@ -106,6 +106,8 @@ export interface GenerateAudioRequest {
   prompt: string
   /** Optional voice alias for TTS. */
   voice?: string
+  /** Optional preview text for voice-design APIs. */
+  previewText?: string
   /** Optional speaking rate / speed multiplier. */
   speed?: number
   /** Requested duration in seconds (music/sfx). */
@@ -134,6 +136,8 @@ export interface GeneratedAudio {
   url: string
   /** Stable audio id / file name. */
   id: string
+  /** Optional voice id returned by a voice-design API. */
+  voiceId?: string
 }
 
 /** Successful generate outcome. */
@@ -153,6 +157,8 @@ export interface HistoryAudioRef {
   mime: string
   /** Duration in seconds when known. */
   duration?: number
+  /** Optional generated voice id. */
+  voiceId?: string
 }
 
 /** A saved generation as the browser consumes it. */
@@ -163,6 +169,7 @@ export interface HistoryEntry {
   model: string
   prompt: string
   voice?: string
+  voiceId?: string
   speed?: number
   duration?: number
   format?: string
@@ -179,6 +186,7 @@ export interface HistoryEntryInput {
   model: string
   prompt: string
   voice?: string
+  voiceId?: string
   speed?: number
   duration?: number
   format?: string

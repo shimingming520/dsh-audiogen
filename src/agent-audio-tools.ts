@@ -24,6 +24,7 @@ interface AgentAudioRef {
   url: string
   mime: string
   bytes: number
+  voiceId?: string
 }
 
 interface AgentAudioResult {
@@ -43,6 +44,7 @@ const audioRefSchema = {
     url: { type: 'string', required: true },
     mime: { type: 'string', required: true },
     bytes: { type: 'integer', required: true },
+    voiceId: { type: 'string' },
   },
 } as const
 
@@ -52,7 +54,7 @@ const resultSchema = {
   properties: {
     status: { type: 'string', required: true },
     message: { type: 'string', required: true },
-    mode: { type: 'string', required: true, enum: ['tts', 'music', 'sfx'] },
+    mode: { type: 'string', required: true, enum: ['tts', 'music', 'sfx', 'voice_design'] },
     model: { type: 'string', required: true },
     audio: { type: 'array', required: true, items: audioRefSchema },
     error: { type: 'string' },
@@ -98,12 +100,13 @@ function ensureConfigured(config: AgentAudioToolConfig): void {
 export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioToolConfig): () => void {
   const disposer = ctx.tools.register(defineTool({
     name: 'generate_audio',
-    description: 'Generate audio with the configured audio provider. Supports text-to-speech, music generation and sound effects. The tool call waits for the upstream result and returns same-origin audio URLs; pass those URLs to the user for playback or download. If multiple models are configured, first ask the user which one to use or pass model explicitly.',
+    description: 'Generate audio with the configured audio provider. Supports text-to-speech, music generation, sound effects and MiniMax voice design. The tool call waits for the upstream result and returns same-origin audio URLs; pass those URLs to the user for playback or download. If multiple models are configured, first ask the user which one to use or pass model explicitly.',
     parameters: {
       prompt: { type: 'string', required: true, description: 'For tts, the text to speak. For music/sfx, a descriptive prompt.' },
-      mode: { type: 'string', enum: ['tts', 'music', 'sfx'], description: 'Generation mode. Defaults to tts.' },
+      mode: { type: 'string', enum: ['tts', 'music', 'sfx', 'voice_design'], description: 'Generation mode. Defaults to tts.' },
       model: { type: 'string', description: 'One of the configured audio models/voices. Defaults to the first configured model.' },
       voice: { type: 'string', description: 'Optional voice id/name for TTS providers.' },
+      preview_text: { type: 'string', description: 'Optional preview text for voice_design.' },
       speed: { type: 'number', description: 'Optional speaking rate / speed multiplier where supported.' },
       duration: { type: 'number', description: 'Requested duration in seconds for music/sfx.' },
       format: { type: 'string', description: 'Output format such as mp3 or wav.' },
@@ -117,15 +120,24 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
     async execute(args, exec) {
       const config = resolve()
       ensureConfigured(config)
-      const picked = resolveModel(config, args.model)
+      const mode = args.mode === 'music' ? 'music' : args.mode === 'sfx' ? 'sfx' : args.mode === 'voice_design' ? 'voice_design' : 'tts'
+      const picked = mode === 'voice_design'
+        ? (() => {
+          const usable = config.channels.filter(channel => channel.apiUrl.trim() !== '' && channel.apiKey.trim() !== '')
+          const target = usable.find(channel => channel.id === config.defaultChannelId) ?? usable[0]
+          if (target === undefined) throw new AudioGenError('No usable audio channel is configured for voice design.', 'no-channel-available')
+          return { channel: target, alias: '', upstream: '' }
+        })()
+        : resolveModel(config, args.model)
       const request: GenerateAudioRequest = {
-        mode: args.mode === 'music' ? 'music' : args.mode === 'sfx' ? 'sfx' : 'tts',
+        mode,
         model: picked.alias,
         upstream: picked.upstream,
         channelId: picked.channel.id,
         channel: picked.channel.name,
         prompt: args.prompt.trim(),
         ...(typeof args.voice === 'string' && args.voice.trim() !== '' ? { voice: args.voice.trim() } : {}),
+        ...(typeof args.preview_text === 'string' && args.preview_text.trim() !== '' ? { previewText: args.preview_text.trim() } : {}),
         ...(typeof args.speed === 'number' ? { speed: args.speed } : {}),
         ...(typeof args.duration === 'number' ? { duration: args.duration } : {}),
         ...(typeof args.format === 'string' && args.format.trim() !== '' ? { format: args.format.trim() } : {}),
@@ -140,6 +152,7 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
             url: `/api/dsh-audiogen/audio/${encodeURIComponent(saved.file)}`,
             mime: saved.mime,
             bytes: saved.bytes,
+            ...(output.voiceId === undefined ? {} : { voiceId: output.voiceId }),
           })
         }
         try {
@@ -159,6 +172,7 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
               mime: audio[index]!.mime,
               bytes: audio[index]!.bytes,
               url: audio[index]!.url,
+              ...(output.voiceId === undefined ? {} : { voiceId: output.voiceId }),
             })),
             channelId: picked.channel.id,
             channel: picked.channel.name,

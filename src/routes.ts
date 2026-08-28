@@ -90,7 +90,7 @@ function messageOf(error: unknown): string {
 }
 
 function parseGenerateRequest(body: Record<string, unknown>): GenerateAudioRequest | undefined {
-  const mode = body.mode === 'music' ? 'music' : body.mode === 'sfx' ? 'sfx' : 'tts'
+  const mode = body.mode === 'music' ? 'music' : body.mode === 'sfx' ? 'sfx' : body.mode === 'voice_design' ? 'voice_design' : 'tts'
   const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
   if (prompt === '') return undefined
   return {
@@ -98,6 +98,7 @@ function parseGenerateRequest(body: Record<string, unknown>): GenerateAudioReque
     model: typeof body.model === 'string' ? body.model.trim() : '',
     prompt,
     ...(typeof body.voice === 'string' && body.voice.trim() !== '' ? { voice: body.voice.trim() } : {}),
+    ...(typeof body.previewText === 'string' && body.previewText.trim() !== '' ? { previewText: body.previewText.trim() } : {}),
     ...(typeof body.speed === 'number' ? { speed: body.speed } : {}),
     ...(typeof body.duration === 'number' ? { duration: body.duration } : {}),
     ...(typeof body.format === 'string' && body.format.trim() !== '' ? { format: body.format.trim() } : {}),
@@ -141,6 +142,10 @@ function resolveChannelRequest(
   const target = explicit ?? defaults
   const asked = request.model.trim()
   if (asked === '') {
+    if (request.mode === 'voice_design') {
+      if (target === undefined) return { ok: false, code: 'no-channels', message: '尚未配置任何渠道' }
+      return { ok: true, request: { ...request, channelId: target.id, channel: target.name } }
+    }
     const alias = target?.models[0]?.alias ?? ''
     if (alias === '') {
       return { ok: false, code: 'no-models', message: `渠道「${target?.name ?? ''}」尚未配置模型/音色，请先在设置中添加` }
@@ -300,6 +305,7 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
               mime: saved.mime,
               bytes: saved.bytes,
               url: `${AUDIO_API.file}/${encodeURIComponent(saved.file)}`,
+              ...(output.voiceId === undefined ? {} : { voiceId: output.voiceId }),
             })
           }
           let history

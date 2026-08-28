@@ -164,7 +164,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 async function normalizeAudioResponse(
   response: Response,
   options: { apiKey: string; fallbackMime?: string },
-): Promise<Array<{ data: Uint8Array; mime: string }>> {
+): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   if (!response.ok) {
     let detail = ''
     try {
@@ -213,7 +213,7 @@ async function normalizeAudioResponse(
   return [{ data: buffer, mime: audioMime(buffer, response.headers.get('content-type') ?? contentType ?? null) }]
 }
 
-async function openAITTS(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string }>> {
+async function openAITTS(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   const base = endpointBase(channel.apiUrl)
   const endpoint = /\/audio\/speech(\?|$)/i.test(base) ? base : `${base}/audio/speech`
   const model = (request.upstream ?? request.model) || 'tts-1'
@@ -239,7 +239,7 @@ async function openAITTS(channel: AudioChannel, request: GenerateAudioRequest, s
   return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
 }
 
-async function elevenLabs(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string }>> {
+async function elevenLabs(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   const base = endpointBase(channel.apiUrl)
   const model = (request.upstream ?? request.model) || 'eleven_multilingual_v2'
   const voiceId = (request.voice ?? request.model ?? model).trim()
@@ -274,10 +274,50 @@ function minimaxApiBase(base: string): string {
   return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`
 }
 
-async function minimax(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string }>> {
+async function minimax(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   const base = minimaxApiBase(channel.apiUrl)
   const model = (request.upstream ?? request.model) || (request.mode === 'music' ? 'music-3.0' : 'speech-2.8-hd')
   const voice = request.voice ?? request.model ?? ''
+
+  if (request.mode === 'voice_design') {
+    const endpoint = `${base}/voice_design`
+    const body: Record<string, unknown> = {
+      prompt: request.prompt,
+      preview_text: request.previewText ?? request.voice ?? '你好，这是新设计的音色试听。',
+    }
+    const response = await fetchWithTimeout(endpoint, {
+      method: 'POST',
+      redirect: 'error',
+      headers: {
+        authorization: `Bearer ${channel.apiKey.trim()}`,
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal,
+    }, UPSTREAM_TIMEOUT_MS)
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new AudioGenError(`MiniMax voice design API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
+    }
+    const payload = await response.json() as {
+      voice_id?: string
+      trial_audio?: string
+      base_resp?: { status_code?: number; status_msg?: string }
+    }
+    if (payload.base_resp?.status_code !== undefined && payload.base_resp.status_code !== 0) {
+      throw new AudioGenError(payload.base_resp.status_msg ?? `MiniMax returned status ${payload.base_resp.status_code}`, 'audio-api-error')
+    }
+    const encoded = payload.trial_audio ?? ''
+    if (encoded === '') throw new AudioGenError('MiniMax voice design returned no trial audio', 'audio-empty-result')
+    const isHex = /^[0-9a-fA-F]+$/.test(encoded) && encoded.length % 2 === 0
+    const data = new Uint8Array(Buffer.from(encoded, isHex ? 'hex' : 'base64'))
+    return [{
+      data,
+      mime: 'audio/mpeg',
+      ...(payload.voice_id === undefined ? {} : { voiceId: payload.voice_id }),
+    }]
+  }
 
   let endpoint: string
   let body: Record<string, unknown>
@@ -327,7 +367,7 @@ async function minimax(channel: AudioChannel, request: GenerateAudioRequest, sig
   return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
 }
 
-async function stabilityAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string }>> {
+async function stabilityAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   const base = endpointBase(channel.apiUrl)
   const endpoint = /\/generation(\?|$)/i.test(base) ? base : `${base}/generation`
   const model = (request.upstream ?? request.model) || 'stable-audio-2.0'
@@ -351,7 +391,7 @@ async function stabilityAudio(channel: AudioChannel, request: GenerateAudioReque
   return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
 }
 
-async function genericAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string }>> {
+async function genericAudio(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   const base = endpointBase(channel.apiUrl)
   if (request.mode === 'tts' && !/\/generate(\?|$)/i.test(base)) {
     return openAITTS(channel, request, signal)
@@ -388,10 +428,13 @@ export async function generateAudio(
   channel: AudioChannel,
   request: GenerateAudioRequest,
   signal?: AbortSignal,
-): Promise<Array<{ data: Uint8Array; mime: string }>> {
+): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   if (channel.apiUrl.trim() === '') throw new AudioGenError('channel API URL is not configured', 'audio-no-endpoint')
   if (channel.apiKey.trim() === '') throw new AudioGenError('channel API key is not configured', 'audio-no-key')
   if (request.prompt.trim() === '') throw new AudioGenError('audio prompt/text is required', 'audio-empty-prompt')
+  if (request.mode === 'voice_design' && !isMiniMax(channel)) {
+    throw new AudioGenError('音色设计当前仅支持 MiniMax 渠道', 'voice-design-unsupported')
+  }
 
   if (isElevenLabs(channel)) return elevenLabs(channel, request, signal)
   if (isMiniMax(channel)) return minimax(channel, request, signal)
