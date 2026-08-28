@@ -266,6 +266,28 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
                 <input type="checkbox" checked={instrumental} onChange={event => setInstrumental(event.target.checked)} />
                 <span>纯音乐（无歌词/人声）is_instrumental</span>
               </label>
+              <div className={css.row}>
+                <label className={css.label}>
+                  <span>采样率</span>
+                  <select className={css.select} value={sampleRate} onChange={event => setSampleRate(event.target.value)}>
+                    <option value="">默认（44100）</option>
+                    <option value="16000">16000</option>
+                    <option value="24000">24000</option>
+                    <option value="32000">32000</option>
+                    <option value="44100">44100</option>
+                  </select>
+                </label>
+                <label className={css.label}>
+                  <span>码率 bps</span>
+                  <select className={css.select} value={bitrate} onChange={event => setBitrate(event.target.value)}>
+                    <option value="">默认（256000）</option>
+                    <option value="32000">32000</option>
+                    <option value="64000">64000</option>
+                    <option value="128000">128000</option>
+                    <option value="256000">256000</option>
+                  </select>
+                </label>
+              </div>
             </>
           ) : null}
 
