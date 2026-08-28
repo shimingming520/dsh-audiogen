@@ -48,6 +48,13 @@ export class AudiogenApi {
     return body.ok === true ? (body.history ?? []) : []
   }
 
+  /** 删除一条历史记录（返回删后的列表）。 */
+  async removeHistory(id: string): Promise<HistoryEntry[]> {
+    const response = await postJson(HISTORY_API.remove, { id })
+    const body = await response.json() as { ok?: boolean; history?: HistoryEntry[] }
+    return body.ok === true ? (body.history ?? []) : []
+  }
+
   async clearHistory(): Promise<void> {
     await postJson(HISTORY_API.clear, {})
   }

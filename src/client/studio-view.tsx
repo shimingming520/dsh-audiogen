@@ -101,6 +101,14 @@ function modeLabelOf(mode: AudioMode): string {
   return tt('mode.voiceDesign')
 }
 
+/** 历史时间显示（YYYY-MM-DD HH:mm）。 */
+function formatClock(timestamp: number): string {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
 function useConfig(scope: AudiogenScope) {
   const [value, setValue] = useState(scope.getSnapshot().value)
   useEffect(() => scope.subscribe(() => { setValue(scope.getSnapshot().value) }), [scope])
@@ -497,6 +505,87 @@ export function StudioView(props: {
 
   const removeTask = (taskId: string): void => {
     setTasks(current => current.filter(task => task.id !== taskId))
+  }
+
+  /** 从历史参数回填表单（参考 AI 生图「恢复」）：配置 + prompt 一键复用。 */
+  const restoreFromParams = (params: Record<string, unknown>, modeValue: AudioMode, singleModel: string, compareModelsRestore?: string[]): void => {
+    const str = (key: string): string | undefined => {
+      const v = params[key]
+      return typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined
+    }
+    const num = (key: string): number | undefined => {
+      const v = params[key]
+      if (typeof v === 'number' && Number.isFinite(v)) return v
+      if (typeof v === 'string' && v.trim() !== '') {
+        const parsed = Number(v)
+        return Number.isFinite(parsed) ? parsed : undefined
+      }
+      return undefined
+    }
+    const bool = (key: string): boolean | undefined => typeof params[key] === 'boolean' ? params[key] as boolean : undefined
+    setMode(modeValue)
+    const modelValue = str('model') ?? singleModel
+    if (modelValue !== '') setModel(modelValue)
+    if (compareModelsRestore !== undefined && compareModelsRestore.length > 0) {
+      setCompareMode(true)
+      setCompareModels(compareModelsRestore)
+    } else {
+      setCompareMode(false)
+    }
+    const voiceValue = str('voice')
+    if (voiceValue !== undefined) setVoice(voiceValue)
+    const speedValue = num('speed')
+    if (speedValue !== undefined) setSpeed(String(speedValue))
+    const durationValue = num('duration')
+    if (durationValue !== undefined) setDuration(String(durationValue))
+    const formatValue = str('format')
+    if (formatValue !== undefined) setFormat(formatValue)
+    const lyricsValue = str('lyrics')
+    if (lyricsValue !== undefined) setLyrics(lyricsValue)
+    const instrumentalValue = bool('isInstrumental')
+    if (instrumentalValue !== undefined) setInstrumental(instrumentalValue)
+    const loopValue = bool('loop')
+    if (loopValue !== undefined) setLoop(loopValue)
+    const influenceValue = num('promptInfluence')
+    if (influenceValue !== undefined) setPromptInfluence(String(influenceValue))
+    const emotionValue = str('emotion')
+    if (emotionValue !== undefined) setEmotion(emotionValue)
+    const volValue = num('vol')
+    if (volValue !== undefined) setVol(String(volValue))
+    const pitchValue = num('pitch')
+    if (pitchValue !== undefined) setPitch(String(pitchValue))
+    if (Array.isArray(params.pronunciationTone)) {
+      setToneText(params.pronunciationTone.filter((item): item is string => typeof item === 'string').join('\n'))
+    }
+    const sampleRateValue = num('sampleRate')
+    if (sampleRateValue !== undefined) setSampleRate(String(sampleRateValue))
+    const bitrateValue = num('bitrate')
+    if (bitrateValue !== undefined) setBitrate(String(bitrateValue))
+    const channelValue = num('audioChannel')
+    if (channelValue !== undefined) setAudioChannel(String(channelValue))
+    const subtitleValue = bool('subtitleEnable')
+    if (subtitleValue !== undefined) setSubtitle(subtitleValue)
+    const seedValue = num('seed')
+    if (seedValue !== undefined) setSeed(String(seedValue))
+    const stepsValue = num('steps')
+    if (stepsValue !== undefined) setSteps(String(stepsValue))
+    const cfgValue = num('cfgScale')
+    if (cfgValue !== undefined) setCfgScale(String(cfgValue))
+    const previewValue = str('previewText')
+    if (previewValue !== undefined) setPreviewText(previewValue)
+    const channelIdValue = str('channelId')
+    if (channelIdValue !== undefined && modeValue === 'voice_design') setDesignChannelId(channelIdValue)
+    props.showToast('已恢复该次生成的配置，可直接再次生成')
+  }
+
+  /** 删除历史记录（对比任务卡删除该任务的全部模型条目）。 */
+  const deleteHistoryEntries = async (ids: string[]): Promise<void> => {
+    try {
+      for (const id of ids) await api.removeHistory(id)
+    } catch {
+      // best-effort
+    }
+    reload()
   }
 
   const openSaveDialog = (files: GeneratedAudio[], context: SaveDialogContext): void => {
@@ -1023,6 +1112,7 @@ export function StudioView(props: {
                       <summary className={css.historyCompareSummary}>
                         <span className={css.historyPrompt}>{item.prompt}</span>
                         <span className={css.historyCompareBadge}>对比 · {item.models.length} 个模型</span>
+                        <span className={css.historyTime}>{formatClock(item.createdAt)}</span>
                       </summary>
                       <div className={css.historyMeta}>{modeLabelOf(item.mode)} · {item.models.map(model => model.model).join(' / ')}</div>
                       {item.models.map(model => (
@@ -1040,6 +1130,15 @@ export function StudioView(props: {
                           </div>
                         </div>
                       ))}
+                      <div className={css.historyActions}>
+                        <button type="button" className={css.historyAction} onClick={() => restoreFromParams(
+                          (item.models[0]?.entry.params ?? {}) as Record<string, unknown>,
+                          item.mode,
+                          item.models[0]?.model ?? '',
+                          item.models.map(model => model.model),
+                        )}>恢复</button>
+                        <button type="button" className={css.historyAction} onClick={() => void deleteHistoryEntries(item.models.map(model => model.entry.id))}>删除</button>
+                      </div>
                     </details>
                   )
                 }
@@ -1048,10 +1147,17 @@ export function StudioView(props: {
                   <div className={css.historyItem} key={item.key}>
                     <div className={css.historyPrompt}>{entry.prompt}</div>
                     <div className={css.historyMeta}>{modeLabelOf(entry.mode)} · {entry.model}{entry.channel ? ` · ${entry.channel}` : ''}</div>
+                    <div className={css.historyTime}>{formatClock(entry.createdAt)}</div>
                     {entry.audio.map((audio, index) => (
                       <AudioPlayer key={index} src={audio.url} compact itemKey={`${entry.id}-${index}`} />
                     ))}
                     <div className={css.historyActions}>
+                      <button type="button" className={css.historyAction} onClick={() => restoreFromParams(
+                        (entry.params ?? {}) as Record<string, unknown>,
+                        entry.mode,
+                        entry.model,
+                      )}>恢复</button>
+                      <button type="button" className={css.historyAction} onClick={() => void deleteHistoryEntries([entry.id])}>删除</button>
                       <button type="button" className={css.historyAction} onClick={() => openSaveDialog(audioRefsOfEntry(entry), contextOfEntry(entry))}>
                         <StarIcon /> 入库
                       </button>

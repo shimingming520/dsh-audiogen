@@ -1134,3 +1134,10 @@
   color: var(--dsw-alias-label-tertiary, #9ca3af);
   padding: 0 6px;
 }
+
+.historyTime {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+  margin: 2px 0;
+  white-space: nowrap;
+}
