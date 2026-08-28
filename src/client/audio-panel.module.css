@@ -953,7 +953,7 @@
   font-weight: 600;
   padding: 3px 10px;
   border-radius: 999px;
-  background: var(--dsw-alias-bg-hover, #f3f4f6);
+  background: var(--dsw-alias-interactive-bg-hover-accent, rgba(38, 49, 72, 0.14));
   border: 1px solid var(--dsw-alias-border-l2, #d1d5db);
   color: var(--dsw-alias-label-primary, #1f2328);
 }
@@ -1083,7 +1083,8 @@
 }
 
 .historyTab[data-active='true'] {
-  background: var(--dsw-alias-bg-hover, #f3f4f6);
+  /* 半透明交互强调色（亮色=深色 tint，暗色=白色 tint），避免选中整块白底 */
+  background: var(--dsw-alias-interactive-bg-hover-accent, rgba(38, 49, 72, 0.14));
   color: var(--dsw-alias-label-primary, #1f2328);
   font-weight: 600;
 }
