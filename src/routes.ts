@@ -249,7 +249,9 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
           ?? view.channels[0]
         const channel: AudioChannel = {
           id: stored?.id ?? 'preview',
-          preset: stored?.preset ?? '',
+          // The draft's own preset wins (even when empty = custom): discovery
+          // must follow the vendor being configured, not the default channel.
+          preset: typeof body?.preset === 'string' ? body.preset.trim() : (stored?.preset ?? ''),
           name: stored?.name ?? '',
           apiUrl: typeof body?.apiUrl === 'string' && body.apiUrl.trim() !== '' ? body.apiUrl.trim() : (stored?.apiUrl ?? ''),
           apiKey: typeof body?.apiKey === 'string' && body.apiKey.trim() !== '' ? body.apiKey.trim() : (stored?.apiKey ?? ''),
