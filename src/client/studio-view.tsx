@@ -856,7 +856,7 @@ export function StudioView(props: {
     <div className={css.studio}>
       <div className={css.formCol}>
         <div className={css.modeRow}>
-          {(['tts', 'music', 'sfx', 'voice_design'] as const).map(item => (
+          {([['tts', '🎙️'], ['music', '🎵'], ['sfx', '🔊'], ['voice_design', '🎨']] as Array<[AudioMode, string]>).map(([item, icon]) => (
             <button
               key={item}
               type="button"
@@ -864,11 +864,13 @@ export function StudioView(props: {
               data-active={mode === item ? 'true' : 'false'}
               onClick={() => setMode(item)}
             >
-              {item === 'tts' ? tt('mode.tts') : item === 'music' ? tt('mode.music') : item === 'sfx' ? tt('mode.sfx') : tt('mode.voiceDesign')}
+              <span className={css.modeIcon}>{icon}</span>
+              {modeLabelOf(item)}
             </button>
           ))}
         </div>
 
+        <p className={css.formSection}>输入</p>
         <label className={css.label}>
           <span>{mode === 'voice_design' ? '音色描述' : mode === 'tts' ? '文本' : '提示词'}</span>
           <textarea className={css.textarea} value={prompt} onChange={event => setPrompt(event.target.value)} placeholder={tt('prompt.placeholder')} />
@@ -895,6 +897,7 @@ export function StudioView(props: {
           </>
         ) : null}
 
+        <p className={css.formSection}>模型</p>
         {needModel ? (
           <label className={css.checkbox} title="选择多个模型，用相同参数逐个生成，便于对比效果">
             <input type="checkbox" checked={compareMode} onChange={event => setCompareMode(event.target.checked)} />
@@ -991,7 +994,14 @@ export function StudioView(props: {
           )
         ) : null}
 
-        {globalSpecs.filter(spec => spec.advanced !== true).map(spec => renderField(spec))}
+        {globalSpecs.some(spec => spec.advanced !== true) ? <p className={css.formSection}>生成参数</p> : null}
+        <div className={css.formFields}>
+          {globalSpecs.filter(spec => spec.advanced !== true).map(spec => (
+            <div key={spec.key} className={spec.key === 'lyrics' || spec.key === 'toneText' ? css.fieldFull : css.fieldCell}>
+              {renderField(spec)}
+            </div>
+          ))}
+        </div>
 
         {mode === 'tts' && globalSpecs.some(spec => spec.advanced === true) ? (
           <details className={css.advanced}>
@@ -1024,6 +1034,15 @@ export function StudioView(props: {
             <span className={css.resultEmptyIcon}>🎵</span>
             <p>{tt('result.empty')}</p>
             <p className={css.resultEmptyHint}>点击「开始生成」即创建一个任务，可同时进行多个；勾选「模型对比」用多个模型同参数生成对比</p>
+            <button type="button" className={css.ghostButton} onClick={() => {
+              const examples: Record<AudioMode, string> = {
+                tts: '今天是不是很开心呀(laughs)，当然了！我们一起去公园散步吧。',
+                music: 'Cinematic orchestral piece with a clear "before/after" transition at 1:00, starting minimalist piano + strings, then full orchestra entrance with timpani and brass at the 1-minute mark.',
+                sfx: '科技感 UI 提示音：清脆短促，带轻微回声与空气感。',
+                voice_design: '讲述悬疑故事的播音员，声音低沉富有磁性，语速时快时慢，营造紧张神秘的氛围。',
+              }
+              setPrompt(examples[mode] ?? '')
+            }}>填入示例 prompt</button>
           </div>
         ) : (
           <div className={css.taskList}>
@@ -1044,6 +1063,9 @@ export function StudioView(props: {
                     <span className={css.resultModeChip}>{task.mode}</span>
                     <span className={css.taskLabel} title={task.prompt}>{task.label}</span>
                     <span className={css.taskStatus} data-state={task.status}>{statusText}</span>
+                    {task.status === 'running' ? (
+                      <span className={css.taskBar}><i style={{ width: `${task.progress.total > 0 ? Math.round((task.progress.done / task.progress.total) * 100) : 0}%` }} /></span>
+                    ) : null}
                     <span className={css.taskActions}>
                       {task.status === 'running' ? (
                         <button type="button" className={css.ghostButton} onClick={() => cancelTask(task.id)}>取消</button>
@@ -1131,13 +1153,13 @@ export function StudioView(props: {
                         </div>
                       ))}
                       <div className={css.historyActions}>
-                        <button type="button" className={css.historyAction} onClick={() => restoreFromParams(
+                        <button type="button" className={css.historyIcon} title="恢复（回填配置与全部模型）" onClick={() => restoreFromParams(
                           (item.models[0]?.entry.params ?? {}) as Record<string, unknown>,
                           item.mode,
                           item.models[0]?.model ?? '',
                           item.models.map(model => model.model),
-                        )}>恢复</button>
-                        <button type="button" className={css.historyAction} onClick={() => void deleteHistoryEntries(item.models.map(model => model.entry.id))}>删除</button>
+                        )}>↺</button>
+                        <button type="button" className={css.historyIcon} title="删除整个对比任务" onClick={() => void deleteHistoryEntries(item.models.map(model => model.entry.id))}>✕</button>
                       </div>
                     </details>
                   )
@@ -1152,14 +1174,14 @@ export function StudioView(props: {
                       <AudioPlayer key={index} src={audio.url} compact itemKey={`${entry.id}-${index}`} />
                     ))}
                     <div className={css.historyActions}>
-                      <button type="button" className={css.historyAction} onClick={() => restoreFromParams(
+                      <button type="button" className={css.historyIcon} title="恢复（回填配置与 prompt）" onClick={() => restoreFromParams(
                         (entry.params ?? {}) as Record<string, unknown>,
                         entry.mode,
                         entry.model,
-                      )}>恢复</button>
-                      <button type="button" className={css.historyAction} onClick={() => void deleteHistoryEntries([entry.id])}>删除</button>
-                      <button type="button" className={css.historyAction} onClick={() => openSaveDialog(audioRefsOfEntry(entry), contextOfEntry(entry))}>
-                        <StarIcon /> 入库
+                      )}>↺</button>
+                      <button type="button" className={css.historyIcon} title="删除这条记录" onClick={() => void deleteHistoryEntries([entry.id])}>✕</button>
+                      <button type="button" className={css.historyIcon} title="加入资源库" onClick={() => openSaveDialog(audioRefsOfEntry(entry), contextOfEntry(entry))}>
+                        <StarIcon />
                       </button>
                     </div>
                   </div>
