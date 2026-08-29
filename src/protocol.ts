@@ -8,7 +8,7 @@
 export const AUDIOGEN_SETTINGS_NAMESPACE = 'dsh-audiogen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '0.4.12'
+export const PLUGIN_VERSION = '0.4.13'
 
 /** Same-origin route family (loopback-only, mirroring dsh-imagegen). */
 export const SETTINGS_API = {
@@ -163,7 +163,7 @@ export interface GenerateAudioRequest {
   loop?: boolean
   /** ElevenLabs 音效：提示词影响度 0-1（prompt_influence，默认 0.3）。 */
   promptInfluence?: number
-  /** Stable Audio 随机种子（seed，0.4.124967294，默认 0=随机）。 */
+  /** Stable Audio 随机种子（seed，0.4.134967294，默认 0=随机）。 */
   seed?: number
   /** Stable Audio 采样步数（steps，按模型收敛：stable-audio-2: 30-100；2.5/3: 4-8）。 */
   steps?: number
@@ -193,7 +193,7 @@ export interface GenerateAudioRequest {
   latexRead?: boolean
   /** MiniMax 发音词典 tone 条目，元素形如 "处理/(chu3)(li3)" 或 "危险/dangerous"。 */
   pronunciationTone?: string[]
-  /** MiniMax 采样率：16000/24000/32000.4.120/48000，默认 32000。 */
+  /** MiniMax 采样率：16000/24000/32000.4.130/48000，默认 32000。 */
   sampleRate?: number
   /** MiniMax 码率（bps）：64000-320000，默认 128000。 */
   bitrate?: number
