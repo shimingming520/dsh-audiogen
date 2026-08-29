@@ -144,6 +144,8 @@ function parseGenerateRequest(body: Record<string, unknown>): GenerateAudioReque
     ...(num(body.cfgScale) !== undefined ? { cfgScale: num(body.cfgScale)! } : {}),
     ...(typeof body.format === 'string' && body.format.trim() !== '' ? { format: body.format.trim() } : {}),
     ...(typeof body.channelId === 'string' && body.channelId !== '' ? { channelId: body.channelId } : {}),
+    // 对比任务的任务 id：随 params 一起入历史，供客户端按 taskId 聚合出对比卡片。
+    ...(typeof body.taskId === 'string' && body.taskId.trim() !== '' ? { taskId: body.taskId.trim() } : {}),
     // ---- MiniMax TTS 专属字段（其他厂商忽略） ----
     ...(str(body.emotion) !== undefined ? { emotion: str(body.emotion)! } : {}),
     ...(num(body.vol) !== undefined ? { vol: num(body.vol)! } : {}),

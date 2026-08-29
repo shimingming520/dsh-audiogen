@@ -533,8 +533,9 @@ export function StudioView(props: {
     setTasks(current => current.filter(task => task.id !== taskId))
   }
 
-  /** 从历史参数回填表单（参考 AI 生图「恢复」）：配置 + prompt 一键复用。 */
-  const restoreFromParams = (params: Record<string, unknown>, modeValue: AudioMode, singleModel: string, compareModelsRestore?: string[]): void => {
+  /** 从历史参数回填表单（参考 AI 生图「恢复」）：配置 + prompt 一键复用。
+   *  compareModelsRestore：对比任务恢复为对比模式；overridesRestore 由各模型 params 差异重建。 */
+  const restoreFromParams = (params: Record<string, unknown>, modeValue: AudioMode, singleModel: string, compareModelsRestore?: string[], overridesRestore?: Record<string, Record<string, string>>): void => {
     const str = (key: string): string | undefined => {
       const v = params[key]
       return typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined
@@ -606,7 +607,27 @@ export function StudioView(props: {
     if (previewValue !== undefined) setPreviewText(previewValue)
     const channelIdValue = str('channelId')
     if (channelIdValue !== undefined && modeValue === 'voice_design') setDesignChannelId(channelIdValue)
+    // 恢复对比任务时重建每模型参数覆盖（各模型 params 与第一项的差异）；单条恢复清空覆盖。
+    setOverrides(overridesRestore ?? {})
     props.showToast('已恢复该次生成的配置，可直接再次生成')
+  }
+
+  /** 由对比历史条目重建每模型参数覆盖：以第一项为全局基准，其余条目与基准不同的字段即覆盖。 */
+  const overridesOfCompare = (models: Array<{ model: string; entry: HistoryEntry }>): Record<string, Record<string, string>> => {
+    const base = (models[0]?.entry.params ?? {}) as Record<string, unknown>
+    const out: Record<string, Record<string, string>> = {}
+    for (const item of models.slice(1)) {
+      const params = (item.entry.params ?? {}) as Record<string, unknown>
+      const diff: Record<string, string> = {}
+      for (const [key, value] of Object.entries(params)) {
+        if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue
+        if (key === 'taskId' || key === 'upstream') continue
+        if (typeof base[key] === typeof value && String(base[key]) === String(value)) continue
+        diff[key] = String(value)
+      }
+      if (Object.keys(diff).length > 0) out[item.model] = diff
+    }
+    return out
   }
 
   /** 调用宿主增强（Agent 默认模型），结果先预览再应用。 */
@@ -1235,6 +1256,7 @@ export function StudioView(props: {
                           item.mode,
                           item.models[0]?.model ?? '',
                           item.models.map(model => model.model),
+                          overridesOfCompare(item.models),
                         )}>↺</button>
                         <button type="button" className={css.historyIcon} title="删除整个对比任务" onClick={() => void deleteHistoryEntries(item.models.map(model => model.entry.id))}>✕</button>
                       </div>
