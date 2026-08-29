@@ -18,7 +18,7 @@ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client
 import { CardForm, booleanField, textField, type CardActions, type CardShell, type FieldState as CardFieldState } from './settings-form.ts'
 import { ChannelsForm, type ChannelDraft, type ChannelsFormActions, type ChannelsFormState } from './channels-form.ts'
 import type { AudiogenScope } from './settings-scope.ts'
-import { MODEL_API, PRESETS_API, type AudioModelCategory, type DiscoveredAudioModel, type ModelMapping, type PresetProviderView } from '../protocol.ts'
+import { MODEL_API, PRESETS_API, LLM_MODELS_API, type AudioModelCategory, type DiscoveredAudioModel, type LlmModelOption, type ModelMapping, type PresetProviderView } from '../protocol.ts'
 import type { AudioGenKey } from './locales.ts'
 import css from './settings-card.module.css'
 
@@ -29,6 +29,7 @@ export interface AudioGenSettings {
   defaultModel?: string
   autoSaveToLibrary?: boolean
   maxConcurrentGenerations?: number
+  enhanceModel?: string
 }
 
 export interface AudioGenSettingsCardState extends CardShell {
@@ -39,6 +40,7 @@ export interface AudioGenSettingsCardState extends CardShell {
   defaultModel: CardFieldState
   autoSaveToLibrary: CardFieldState
   maxConcurrentGenerations: CardFieldState
+  enhanceModel: CardFieldState
 }
 
 export interface AudioGenSettingsCardFace extends CardActions {
@@ -60,6 +62,7 @@ export class AudioGenSettingsCardController {
       textField('defaultModel'),
       booleanField('autoSaveToLibrary'),
       textField('maxConcurrentGenerations'),
+      textField('enhanceModel'),
     ])
     this.channelsForm = new ChannelsForm(scope)
   }
@@ -76,6 +79,7 @@ export class AudioGenSettingsCardController {
       defaultModel: this.form.field('defaultModel'),
       autoSaveToLibrary: this.form.field('autoSaveToLibrary'),
       maxConcurrentGenerations: this.form.field('maxConcurrentGenerations'),
+      enhanceModel: this.form.field('enhanceModel'),
     }
   }
 
@@ -387,6 +391,9 @@ function ChannelEditor(props: ChannelEditorProps): React.JSX.Element {
         onAdopt={() => adoptCandidates()}
         onCloseCandidates={closeCandidates}
       />
+      {/stability/i.test(`${props.channel?.preset ?? invited?.id ?? presetId}|${url}`) ? (
+        <p className={css.sectionHint}>{t('channel.stabilityHint')}</p>
+      ) : null}
       <label className={css.field}>
         <span className={css.label}>
           <input type="checkbox" checked={isDefault} disabled={!writable} onChange={event => setIsDefault(event.target.checked)} /> {t('channel.default')}
@@ -469,20 +476,32 @@ function ModelCatalog(props: ModelCatalogProps): React.JSX.Element {
                 disabled={!writable}
                 onChange={event => props.onPatchModel(index, { id: event.target.value })}
               />
-              <select
-                className={`${css.select} ${css.modelCategorySelect}`}
-                value={model.category ?? ''}
-                aria-label={`${t('channel.modelCategory')} ${index + 1}`}
-                disabled={!writable}
-                onChange={event => {
-                  const value = event.target.value as AudioModelCategory | ''
-                  props.onPatchModel(index, value === '' ? { category: undefined } : { category: value })
-                }}
-              >
-                {MODEL_CATEGORIES.map(category => (
-                  <option key={category ?? 'auto'} value={category ?? ''}>{category === undefined ? t('channel.category.auto') : t(`channel.category.${category}`)}</option>
-                ))}
-              </select>
+              {/^stable-audio-/i.test(model.id) ? (
+                <select
+                  className={`${css.select} ${css.modelCategorySelect}`}
+                  value="__stable-dual__"
+                  aria-label={`${t('channel.modelCategory')} ${index + 1}`}
+                  disabled
+                  title={t('channel.category.stableDualHint')}
+                >
+                  <option value="__stable-dual__">{t('channel.category.stableDual')}</option>
+                </select>
+              ) : (
+                <select
+                  className={`${css.select} ${css.modelCategorySelect}`}
+                  value={model.category ?? ''}
+                  aria-label={`${t('channel.modelCategory')} ${index + 1}`}
+                  disabled={!writable}
+                  onChange={event => {
+                    const value = event.target.value as AudioModelCategory | ''
+                    props.onPatchModel(index, value === '' ? { category: undefined } : { category: value })
+                  }}
+                >
+                  {MODEL_CATEGORIES.map(category => (
+                    <option key={category ?? 'auto'} value={category ?? ''}>{category === undefined ? t('channel.category.auto') : t(`channel.category.${category}`)}</option>
+                  ))}
+                </select>
+              )}
               <button
                 type="button"
                 className={css.modelRowRemove}
@@ -554,6 +573,8 @@ export function AudioGenSettingsCard(props: AudioGenSettingsCardProps) {
   const [presetLoading, setPresetLoading] = useState(false)
   const [presetError, setPresetError] = useState<string | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [llmModels, setLlmModels] = useState<LlmModelOption[] | null>(null)
+  const [llmModelsError, setLlmModelsError] = useState<string | null>(null)
 
   const channels = state.channels.channels
   const editingChannel = editor !== null && editor.kind === 'edit'
@@ -574,6 +595,18 @@ export function AudioGenSettingsCard(props: AudioGenSettingsCardProps) {
         .finally(() => setPresetLoading(false))
     }
   }, [editor, presets.length, presetError, presetLoading])
+
+  // 展开卡片时加载「设置 → 模型」的 LLM 提供方/模型列表（提示词增强模型下拉）。
+  useEffect(() => {
+    if (!open || llmModels !== null || llmModelsError !== null) return
+    void fetch(LLM_MODELS_API, { method: 'POST' })
+      .then(async response => {
+        const body = await response.json() as { ok?: boolean; providers?: LlmModelOption[]; message?: string }
+        if (!response.ok || body.ok !== true || body.providers === undefined) throw new Error(body.message ?? `HTTP ${response.status}`)
+        setLlmModels(body.providers)
+      })
+      .catch(error => setLlmModelsError(error instanceof Error ? error.message : String(error)))
+  }, [open, llmModels, llmModelsError])
 
   if (!state.available) return null
 
@@ -706,6 +739,31 @@ export function AudioGenSettingsCard(props: AudioGenSettingsCardProps) {
               )
             ) : null}
           </section>
+
+          <div className={css.field}>
+            <label className={css.label}>
+              <span>{t('settings.enhanceModel')}</span>
+              <select
+                className={css.select}
+                value={state.enhanceModel.text}
+                disabled={!state.writable}
+                onChange={event => props.edit('enhanceModel', event.target.value)}
+              >
+                <option value="">{t('settings.enhanceModelDefault')}</option>
+                {llmModels !== null ? llmModels.map(option => (
+                  <option key={`${option.provider}|${option.id}`} value={`${option.provider}|${option.id}`}>
+                    {`${option.providerName} — ${option.name}${option.name !== option.id ? `（${option.id}）` : ''}`}
+                  </option>
+                )) : null}
+                {llmModels !== null && state.enhanceModel.text !== ''
+                  && !llmModels.some(option => `${option.provider}|${option.id}` === state.enhanceModel.text) ? (
+                    <option value={state.enhanceModel.text}>{state.enhanceModel.text}</option>
+                  ) : null}
+              </select>
+              <span className={css.sectionHint}>{t('settings.enhanceModelHint')}</span>
+              {llmModelsError !== null ? <span className={css.failed}>{t('settings.enhanceModelFailed')}：{llmModelsError}</span> : null}
+            </label>
+          </div>
 
           <div className={css.field}>
             <label className={css.label}>

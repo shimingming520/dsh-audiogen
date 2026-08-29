@@ -16,9 +16,9 @@ import { discoverAudioModels } from './audio-models.ts'
 import { AUDIO_PRESETS } from './audio-presets.ts'
 import { appendHistory, clearHistory, listHistory, readAudioFile, removeHistory, saveAudioFile, listLibrary, saveToLibrary, updateLibraryEntry, removeLibraryEntries, readLibraryFile } from './audio-store.ts'
 import {
-  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, ENHANCE_API, GENERATE_API, HISTORY_API, LIBRARY_API, MODEL_API, PRESETS_API, SETTINGS_API, TASK_API,
+  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, ENHANCE_API, GENERATE_API, HISTORY_API, LIBRARY_API, LLM_MODELS_API, MODEL_API, PRESETS_API, SETTINGS_API, TASK_API,
   LIBRARY_TYPES,
-  type GenerateAudioRequest, type GeneratedAudio, type HistoryEntryInput, type LibraryAudioInput, type LibraryProvenance, type LibraryType,
+  type GenerateAudioRequest, type GeneratedAudio, type HistoryEntryInput, type LibraryAudioInput, type LibraryProvenance, type LibraryType, type LlmModelOption,
 } from './protocol.ts'
 
 const MAX_JSON_BODY_BYTES = 16 * 1024 * 1024
@@ -49,6 +49,8 @@ export interface AudiogenRoutesDeps {
   budget: GenerationBudget
   /** 提示词增强：调用 Agent 默认模型，返回增强后的文本。 */
   enhance: (prompt: string, mode: GenerateAudioRequest['mode']) => Promise<string>
+  /** 「设置 → 模型」提供方列表 + 各自可广播模型（增强模型下拉候选）。 */
+  llmModelOptions: () => Promise<LlmModelOption[]>
 }
 
 function isLoopbackRequest(request: IncomingMessage): boolean {
@@ -325,6 +327,20 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
       handler: async (req, res) => {
         if (!guard(req, res, 'POST')) return
         writeJson(res, 200, { ok: true, presets: AUDIO_PRESETS })
+      },
+    },
+    // --------------------------------------------- LLM models (enhance)
+    {
+      kind: 'exact',
+      path: LLM_MODELS_API,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        try {
+          const providers = await deps.llmModelOptions()
+          writeJson(res, 200, { ok: true, providers })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'llm-models-failed', message: messageOf(error) })
+        }
       },
     },
     // ---------------------------------------------- model/voice discovery

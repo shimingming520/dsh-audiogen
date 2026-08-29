@@ -8,7 +8,7 @@
 export const AUDIOGEN_SETTINGS_NAMESPACE = 'dsh-audiogen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '0.4.6'
+export const PLUGIN_VERSION = '0.4.7'
 
 /** Same-origin route family (loopback-only, mirroring dsh-imagegen). */
 export const SETTINGS_API = {
@@ -29,6 +29,9 @@ export const ENHANCE_API = '/api/dsh-audiogen/prompt/enhance' as const
 
 /** Host-mediated built-in provider catalog (channels the user can instantiate). */
 export const PRESETS_API = '/api/dsh-audiogen/presets' as const
+
+/** LLM 模型目录：提示词增强模型的候选（来自「设置 → 模型」各提供方）。 */
+export const LLM_MODELS_API = '/api/dsh-audiogen/llm/models' as const
 
 /** Host-mediated model/voice discovery endpoint. */
 export const MODEL_API = {
@@ -89,6 +92,18 @@ export interface ModelMapping {
   id: string
   /** Optional capability category, used by the UI to group model lists. */
   category?: AudioModelCategory
+}
+
+/** 一个「设置 → 模型」中的 LLM 候选模型（提示词增强模型下拉用）。 */
+export interface LlmModelOption {
+  /** 提供方路由（如 deepseek-official / google）。 */
+  provider: string
+  /** 提供方展示名（如 DeepSeek / google）。 */
+  providerName: string
+  /** 模型 id（上游型号，如 deepseek-v4-flash-vision-exp）。 */
+  id: string
+  /** 模型展示名。 */
+  name: string
 }
 
 /** A model/voice discovered from a vendor endpoint (not yet persisted). */

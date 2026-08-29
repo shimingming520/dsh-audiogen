@@ -16,7 +16,7 @@ import z from 'schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
-import { AUDIOGEN_SETTINGS_NAMESPACE, type AudioMode, type ChannelConfig, type ModelMapping } from './protocol.ts'
+import { AUDIOGEN_SETTINGS_NAMESPACE, type AudioMode, type ChannelConfig, type LlmModelOption, type ModelMapping } from './protocol.ts'
 import { createGenerationBudget } from './audio-scheduler.ts'
 import { enhancePromptText } from './prompt-enhance.ts'
 import { AudioGenError } from './audio-engine.ts'
@@ -45,6 +45,11 @@ export interface Config {
   autoSaveToLibrary?: boolean
   /** 设置卡按文本编辑，保存值可能是数字或数字字符串。 */
   maxConcurrentGenerations?: number | string
+  /**
+   * 提示词增强模型，格式 "provider|model"（如 "deepseek-official|deepseek-v4-flash-vision-exp"）；
+   * 空串表示跟随 Agent 默认模型（「设置 → 模型」）。
+   */
+  enhanceModel?: string
 }
 
 const DEFAULT_MAX_CONCURRENT = 5
@@ -68,6 +73,7 @@ export const Config: z<Config> = z.object({
   defaultModel: z.string().default(''),
   autoSaveToLibrary: z.boolean().default(false),
   maxConcurrentGenerations: z.union([z.number(), z.string()]).default(DEFAULT_MAX_CONCURRENT),
+  enhanceModel: z.string().default(''),
 })
 
 const DEFAULT_ENABLED = true
@@ -158,6 +164,8 @@ export interface EffectiveConfig {
   defaultChannelId: string
   defaultModel: string
   autoSaveToLibrary: boolean
+  /** 提示词增强模型（"provider|model"；空串 = 跟随 Agent 默认模型）。 */
+  enhanceModel: string
   maxConcurrentGenerations: number
 }
 
@@ -186,6 +194,7 @@ export function apply(ctx: Context, config?: Config): void {
       })),
       defaultChannelId,
       defaultModel: typeof value.defaultModel === 'string' ? value.defaultModel.trim() : '',
+      enhanceModel: typeof value.enhanceModel === 'string' ? value.enhanceModel.trim() : '',
       autoSaveToLibrary: value.autoSaveToLibrary === true,
       maxConcurrentGenerations: (() => {
         const rawMax = value.maxConcurrentGenerations
@@ -198,11 +207,54 @@ export function apply(ctx: Context, config?: Config): void {
   // 全局并发闸门：所有上游调用（面板路由 + Agent 工具）共享「最大并发生成数」。
   const budget = createGenerationBudget(() => resolve().maxConcurrentGenerations)
 
-  // 提示词增强：复用 Agent 默认模型（agent-default-model 设置），面板与 Agent 工具共用。
+  // 提示词增强：优先用设置的增强模型（enhanceModel），否则复用 Agent 默认模型
+  // （agent-default-model 设置）；面板与 Agent 工具共用。
   const enhance = async (prompt: string, mode: AudioMode): Promise<string> => {
     const seam = ctx.get('settings') as unknown as SettingsSeam
     if (seam?.describe === undefined) throw new AudioGenError('设置服务不可用，无法增强提示词', 'settings-unavailable')
-    return enhancePromptText({ settings: seam, llm: () => ctx.get('llm') }, prompt, mode)
+    return enhancePromptText({ settings: seam, llm: () => ctx.get('llm') }, prompt, mode, enhanceSelectionOf(resolve()))
+  }
+
+  /** 解析设置的增强模型（"provider|model"）；空/非法值返回 undefined = 跟随默认。 */
+  const enhanceSelectionOf = (config: EffectiveConfig): { provider: string; model: string } | undefined => {
+    const raw = config.enhanceModel ?? ''
+    const sep = raw.indexOf('|')
+    if (sep <= 0 || sep >= raw.length - 1) return undefined
+    const provider = raw.slice(0, sep).trim()
+    const model = raw.slice(sep + 1).trim()
+    return provider !== '' && model !== '' ? { provider, model } : undefined
+  }
+
+  /** 读取「设置 → 模型」目录：各提供方 + 可广播的模型列表（增强模型下拉候选）。 */
+  const llmModelOptions = async (): Promise<LlmModelOption[]> => {
+    const llm = ctx.get('llm') as {
+      listProviders?: () => Array<{ id?: string; name?: string }>
+      listConfigurableProviders?: () => Array<{ provider?: string; displayName?: string }>
+      listModels?: (provider: string) => Promise<Array<{ id?: string; name?: string }>>
+    } | undefined
+    if (llm === undefined || llm.listProviders === undefined || llm.listModels === undefined) return []
+    const options: LlmModelOption[] = []
+    const directory = new Map<string, string>()
+    if (llm.listConfigurableProviders !== undefined) {
+      for (const entry of llm.listConfigurableProviders() ?? []) {
+        if (typeof entry.provider === 'string' && entry.provider !== '' && typeof entry.displayName === 'string') {
+          directory.set(entry.provider, entry.displayName)
+        }
+      }
+    }
+    for (const info of llm.listProviders() ?? []) {
+      const provider = typeof info.id === 'string' ? info.id : ''
+      if (provider === '') continue
+      let models: Array<{ id?: string; name?: string }> = []
+      try { models = (await llm.listModels(provider)) ?? [] } catch { models = [] }
+      for (const model of models) {
+        const id = typeof model.id === 'string' ? model.id.trim() : ''
+        if (id === '') continue
+        const name = typeof model.name === 'string' && model.name.trim() !== '' ? model.name.trim() : id
+        options.push({ provider, providerName: directory.get(provider) ?? provider, id, name })
+      }
+    }
+    return options
   }
 
   const channelsView = (): ChannelsView => {
@@ -219,6 +271,7 @@ export function apply(ctx: Context, config?: Config): void {
         autoSave: () => resolve().autoSaveToLibrary,
         budget,
         enhance,
+        llmModelOptions,
       })
       const disposers = routes.map(route => ctx.webServer.register(route))
       return () => { for (const dispose of disposers) dispose() }

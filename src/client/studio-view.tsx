@@ -16,10 +16,25 @@ import {
   HISTORY_API,
   type AudioMode, type GeneratedAudio, type GenerateAudioRequest, type HistoryEntry, type LibraryEntry,
 } from '../protocol.ts'
+import type { ModelOption } from './settings-scope.ts'
 import { AudioPlayer } from './audio-player.tsx'
 import { LibrarySaveDialog, type SaveDialogContext } from './library-save-dialog.tsx'
 import { CheckIcon, DownloadIcon, StarIcon } from './icons.tsx'
 import css from './audio-panel.module.css'
+
+/**
+ * 模型是否适用于当前模式。
+ * - stable-audio-*（Stable Audio 系列）：官方 text-to-audio 协议对音乐与音效是同一接口，
+ *   因此同时适用于「音乐生成」与「音效生成」；官方不支持 TTS（语音合成），故不出现在 TTS。
+ * - 其余模型：按设置中的分类（category）匹配，auto（未分类）适用于全部模式。
+ */
+function modelSuitableForMode(entry: ModelOption, mode: AudioMode): boolean {
+  if (mode === 'voice_design') return false
+  if (/^stable-audio-/i.test(entry.alias)) return mode === 'music' || mode === 'sfx'
+  if (entry.category === undefined) return true
+  if (entry.category === mode) return true
+  return entry.category === 'tts' && mode === 'tts'
+}
 
 export interface StudioReuse {
   nonce: number
@@ -209,7 +224,13 @@ export function StudioView(props: {
   })
 
   const [mode, setMode] = useState<AudioMode>('tts')
-  const [prompt, setPrompt] = useState('')
+  /** 每个模式独立的输入内容（TTS 文本 / 音乐·音效提示词 / 音色描述），切模式互不干扰。 */
+  const [promptByMode, setPromptByMode] = useState<Record<AudioMode, string>>({ tts: '', music: '', sfx: '', voice_design: '' })
+  const prompt = promptByMode[mode] ?? ''
+  const setPrompt = (next: string): void => {
+    const target = mode
+    setPromptByMode(current => (current[target] === next ? current : { ...current, [target]: next }))
+  }
   const [previewText, setPreviewText] = useState('')
   const [model, setModel] = useState('')
   const [voice, setVoice] = useState('')
@@ -233,6 +254,8 @@ export function StudioView(props: {
   // 提示词增强
   const [enhancing, setEnhancing] = useState(false)
   const [enhancePreview, setEnhancePreview] = useState<string | null>(null)
+  // 切换模式后增强预览属于旧模式，清除以免误用（prompt 本身按模式独立保留）。
+  useEffect(() => { setEnhancePreview(null) }, [mode])
   // Stable Audio 参数（仅 Stability 渠道显示）
   const [seed, setSeed] = useState('')
   const [steps, setSteps] = useState('')
@@ -273,7 +296,7 @@ export function StudioView(props: {
   const visibleModels = useMemo(() => {
     if (mode === 'voice_design') return []
     return modelOptions.models
-      .filter(entry => entry.category === undefined || entry.category === 'tts' && mode === 'tts' || entry.category === mode)
+      .filter(entry => modelSuitableForMode(entry, mode))
       .map(entry => entry.alias)
   }, [modelOptions.models, mode])
 
@@ -528,7 +551,10 @@ export function StudioView(props: {
     const bool = (key: string): boolean | undefined => typeof params[key] === 'boolean' ? params[key] as boolean : undefined
     setMode(modeValue)
     const promptValue = str('prompt')
-    if (promptValue !== undefined) setPrompt(promptValue)
+    if (promptValue !== undefined) {
+      // 直接写入被恢复模式自己的槽位（此刻闭包 mode 仍是旧值）。
+      setPromptByMode(current => (current[modeValue] === promptValue ? current : { ...current, [modeValue]: promptValue }))
+    }
     const modelValue = str('model') ?? singleModel
     if (modelValue !== '') setModel(modelValue)
     if (compareModelsRestore !== undefined && compareModelsRestore.length > 0) {
@@ -878,6 +904,8 @@ export function StudioView(props: {
 
   const needModel = mode !== 'voice_design'
   const runningCount = tasks.filter(task => task.status === 'running').length
+  /** 结果列只显示当前模式的任务（历史面板已按模式分组）。 */
+  const visibleTasks = useMemo(() => tasks.filter(task => task.mode === mode), [tasks, mode])
 
   return (
     <div className={css.studio}>
@@ -1031,7 +1059,11 @@ export function StudioView(props: {
                 {visibleModels.length === 0 ? <option value="">（当前模式暂无可用模型）</option> : null}
                 {groupedModels.map(group => (
                   <optgroup key={group.channelId} label={group.channelName}>
-                    {group.models.map(item => <option key={item.alias} value={item.alias}>{item.alias}</option>)}
+                    {group.models.map(item => (
+                      <option key={item.alias} value={item.alias}>
+                        {/^stable-audio-/i.test(item.alias) ? `${item.alias} · 音乐/音效` : item.alias}
+                      </option>
+                    ))}
                   </optgroup>
                 ))}
               </select>
@@ -1074,7 +1106,7 @@ export function StudioView(props: {
 
       <div className={css.resultCol}>
         {error !== null ? <p className={css.error}>{error}</p> : null}
-        {tasks.length === 0 ? (
+        {visibleTasks.length === 0 ? (
           <div className={css.resultEmpty}>
             <span className={css.resultEmptyIcon}>🎵</span>
             <p>{tt('result.empty')}</p>
@@ -1091,7 +1123,7 @@ export function StudioView(props: {
           </div>
         ) : (
           <div className={css.taskList}>
-            {tasks.map(task => {
+            {visibleTasks.map(task => {
               const elapsed = task.finishedAt !== undefined
                 ? Math.round((task.finishedAt - task.startedAt) / 1000)
                 : Math.round((Date.now() - task.startedAt) / 1000)

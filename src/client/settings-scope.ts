@@ -31,6 +31,8 @@ export interface AudiogenConfig {
   defaultModel?: string
   /** 生成完成后自动保存到资源库（面板与 Agent 生成均生效）。 */
   autoSaveToLibrary?: boolean
+  /** 提示词增强模型（"provider|model"；空串 = 跟随 Agent 默认模型）。 */
+  enhanceModel?: string
 }
 
 /** One settings path-op as the bridge consumes it. */

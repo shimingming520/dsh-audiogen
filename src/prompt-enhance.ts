@@ -34,12 +34,29 @@ export interface PromptEnhanceDeps {
   llm?: () => unknown
 }
 
-/** 读取 Agent 默认模型并调用 LLM 增强，返回增强后的文本。 */
-export async function enhancePromptText(deps: PromptEnhanceDeps, prompt: string, mode: AudioMode): Promise<string> {
+/** 设置中显式选择的增强模型（provider + model）。 */
+export interface EnhanceModelSelection {
+  provider: string
+  model: string
+}
+
+/** 读取 Agent 默认模型并调用 LLM 增强，返回增强后的文本。
+ *  @param override - 用户设置的增强模型；缺省/为空时回退到 agent-default-model。 */
+export async function enhancePromptText(
+  deps: PromptEnhanceDeps,
+  prompt: string,
+  mode: AudioMode,
+  override?: EnhanceModelSelection,
+): Promise<string> {
   const text = prompt.trim()
   if (text === '') throw new AudioGenError('提示词为空，无法增强', 'enhance-empty-prompt')
-  const descriptor = (deps.settings.describe({ redactSecrets: true }) ?? []).find(candidate => String(candidate.ns) === 'agent-default-model')
-  const value = (descriptor?.value ?? {}) as { provider?: unknown; model?: unknown }
+  const selected = override !== undefined && override.provider.trim() !== '' && override.model.trim() !== ''
+    ? { provider: override.provider.trim(), model: override.model.trim() }
+    : undefined
+  const descriptor = selected === undefined
+    ? (deps.settings.describe({ redactSecrets: true }) ?? []).find(candidate => String(candidate.ns) === 'agent-default-model')
+    : undefined
+  const value = selected ?? ((descriptor?.value ?? {}) as { provider?: unknown; model?: unknown })
   const provider = typeof value.provider === 'string' && value.provider.trim() !== '' ? value.provider.trim() : ''
   const model = typeof value.model === 'string' && value.model.trim() !== '' ? value.model.trim() : ''
   if (provider === '' || model === '') {
@@ -53,22 +70,32 @@ export async function enhancePromptText(deps: PromptEnhanceDeps, prompt: string,
   const timer = setTimeout(() => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')), 30_000)
   timer.unref?.()
   let output = ''
+  let terminalFailure = ''
   try {
     for await (const chunk of runtime.stream({
       provider,
       model,
-      messages: [{ role: 'user', content: text }],
+      // dsh-llm 的 Message.content 是 ContentBlock[]（如 [{ type: 'text', text }]），不是纯字符串；
+      // 传字符串会在适配器 contentHasImage() 里抛 "content.some is not a function"，
+      // 主机把该异常转成终止的 finish/error 分片，导致下面永远收集不到文本。
+      messages: [{ role: 'user', content: [{ type: 'text', text }] }],
       system: instructionsFor(mode),
       temperature: 0.7,
       maxTokens: 1200,
       signal: controller.signal,
     })) {
-      const record = chunk as { type?: string; text?: string; block?: { type?: string; text?: string } }
+      const record = chunk as { type?: string; text?: string; block?: { type?: string; text?: string }; reason?: { kind?: string; failure?: { message?: string; code?: string } } }
       if (record.type === 'text-delta' && typeof record.text === 'string') {
         output += record.text
       } else if (record.type === 'block-end' && record.block !== undefined
         && record.block.type === 'text' && typeof record.block.text === 'string') {
         output += record.block.text
+      } else if (record.type === 'finish' && record.reason !== undefined
+        && record.reason.kind !== 'stop' && record.reason.kind !== undefined && terminalFailure === '') {
+        const failure = record.reason.failure
+        terminalFailure = typeof failure?.message === 'string' && failure.message.trim() !== ''
+          ? `${failure.message}${typeof failure.code === 'string' ? `（${failure.code}）` : ''}`
+          : `stream ${record.reason.kind}`
       }
     }
   } finally {
@@ -76,6 +103,9 @@ export async function enhancePromptText(deps: PromptEnhanceDeps, prompt: string,
   }
   const result = stripFences(output.trim())
   if (result === '') {
+    if (terminalFailure !== '') {
+      throw new AudioGenError(`增强失败：LLM 调用出错（${terminalFailure}）。请检查「设置 → 模型」的默认模型是否可用`, 'enhance-llm-error')
+    }
     throw new AudioGenError('模型未返回增强内容：请检查「设置 → 模型」的默认模型是否可用（或稍后重试）', 'enhance-empty-result')
   }
   return result
