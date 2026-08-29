@@ -278,8 +278,23 @@ export function StudioView(props: {
   // 历史记录分类 tab
   const [historyTab, setHistoryTab] = useState<HistoryTab>('all')
   // 模型对比
-  const [compareMode, setCompareMode] = useState(false)
-  const [compareModels, setCompareModels] = useState<string[]>([])
+  /** 对比模式与对比模型选择按模式独立保存：恢复对比任务或切换模式时不会串到其他模块。 */
+  const [compareModeByMode, setCompareModeByMode] = useState<Record<AudioMode, boolean>>({ tts: false, music: false, sfx: false, voice_design: false })
+  const compareMode = compareModeByMode[mode] ?? false
+  const setCompareMode = (next: boolean): void => {
+    const target = mode
+    setCompareModeByMode(current => (current[target] === next ? current : { ...current, [target]: next }))
+  }
+  const [compareModelsByMode, setCompareModelsByMode] = useState<Record<AudioMode, string[]>>({ tts: [], music: [], sfx: [], voice_design: [] })
+  const compareModels = compareModelsByMode[mode] ?? []
+  const setCompareModels = (next: string[] | ((current: string[]) => string[])): void => {
+    const target = mode
+    setCompareModelsByMode(current => {
+      const previous = current[target] ?? []
+      const updated = typeof next === 'function' ? next(previous) : next
+      return updated === previous ? current : { ...current, [target]: updated }
+    })
+  }
   // 每模型参数覆盖（留空 = 自动沿用全局）
   const [overrides, setOverrides] = useState<Record<string, Record<string, string>>>({})
   const { entries, reload, clear } = useHistory()
@@ -564,11 +579,12 @@ export function StudioView(props: {
     }
     const modelValue = str('model') ?? singleModel
     if (modelValue !== '') setModel(modelValue)
+    // 直接写入被恢复模式自己的槽位（此闭包里 mode 仍是旧值）。
     if (compareModelsRestore !== undefined && compareModelsRestore.length > 0) {
-      setCompareMode(true)
-      setCompareModels(compareModelsRestore)
+      setCompareModeByMode(current => ({ ...current, [modeValue]: true }))
+      setCompareModelsByMode(current => ({ ...current, [modeValue]: compareModelsRestore }))
     } else {
-      setCompareMode(false)
+      setCompareModeByMode(current => ({ ...current, [modeValue]: false }))
     }
     const voiceValue = str('voice')
     if (voiceValue !== undefined) setVoice(voiceValue)

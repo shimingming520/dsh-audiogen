@@ -8,7 +8,7 @@
 export const AUDIOGEN_SETTINGS_NAMESPACE = 'dsh-audiogen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '0.4.9'
+export const PLUGIN_VERSION = '0.4.10'
 
 /** Same-origin route family (loopback-only, mirroring dsh-imagegen). */
 export const SETTINGS_API = {
@@ -163,7 +163,7 @@ export interface GenerateAudioRequest {
   loop?: boolean
   /** ElevenLabs 音效：提示词影响度 0-1（prompt_influence，默认 0.3）。 */
   promptInfluence?: number
-  /** Stable Audio 随机种子（seed，0-4294967294，默认 0=随机）。 */
+  /** Stable Audio 随机种子（seed，0.4.104967294，默认 0=随机）。 */
   seed?: number
   /** Stable Audio 采样步数（steps，按模型收敛：stable-audio-2: 30-100；2.5/3: 4-8）。 */
   steps?: number
