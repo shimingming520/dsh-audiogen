@@ -9,7 +9,7 @@
 ![DSH plugin](https://img.shields.io/badge/DSH-plugin-brightgreen?style=flat-square)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-blue?style=flat-square)
 
-![Main panel](docs/images/panel-compare.png)
+![Main panel](docs/images/hero.png)
 
 ## ✨ Features
 
@@ -25,13 +25,13 @@
 
 ## 📸 Screenshots
 
-| Generation panel | Model comparison |
+| Generation panel | Resource library |
 | --- | --- |
-| ![Generation](docs/images/panel-music.png) | ![Compare](docs/images/panel-compare.png) |
+| ![Generation](docs/images/hero.png) | ![Library](docs/images/library.png) |
 
-| History & restore | Channels settings |
+| Library — full provenance drawer | Channels settings |
 | --- | --- |
-| ![History](docs/images/history-panel.png) | ![Settings](docs/images/settings-channels.png) |
+| ![Library detail](docs/images/library-detail.png) | ![Settings](docs/images/settings-channels.png) |
 
 | Channel editor (model catalog & auto capabilities) | LLM models (Settings → Models) |
 | --- | --- |

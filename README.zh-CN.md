@@ -9,7 +9,7 @@
 ![DSH plugin](https://img.shields.io/badge/DSH-plugin-brightgreen?style=flat-square)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-blue?style=flat-square)
 
-![主面板](docs/images/panel-compare.png)
+![主面板](docs/images/hero.png)
 
 ## ✨ 功能特性
 
@@ -25,13 +25,13 @@
 
 ## 📸 截图
 
-| 生成面板 | 模型对比 |
+| 生成面板 | 资源库 |
 | --- | --- |
-| ![生成](docs/images/panel-music.png) | ![对比](docs/images/panel-compare.png) |
+| ![生成](docs/images/hero.png) | ![资源库](docs/images/library.png) |
 
-| 历史记录与恢复 | 渠道设置 |
+| 资源库详情（完整溯源） | 渠道设置 |
 | --- | --- |
-| ![历史](docs/images/history-panel.png) | ![设置](docs/images/settings-channels.png) |
+| ![资源库详情](docs/images/library-detail.png) | ![设置](docs/images/settings-channels.png) |
 
 | 渠道编辑（模型目录与自动能力识别） | LLM 模型（设置 → 模型） |
 | --- | --- |
