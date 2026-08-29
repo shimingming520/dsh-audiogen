@@ -1,84 +1,109 @@
-# dsh-audiogen
+# 🎧 dsh-audiogen
 
-DeepSeek Harness（DSH）AI 音频插件：让 Agent 不只会回答，还能生成语音、音乐与音效。
+**AI audio generation for DeepSeek Harness (DSH)** — turn your DSH web GUI into an audio studio: text-to-speech, music, sound effects and voice design, from a sidebar panel or straight from the Agent.
 
-- 侧边栏新增「AI 音频」模块，与 dsh-imagegen 的「AI 生图」类似。
-- 在「设置 → 插件 → AI 音频」中可添加多个音频厂商渠道：
-  - OpenAI 兼容 TTS
-  - ElevenLabs
-  - MiniMax
-  - Stability AI（音乐/音效）
-  - 自定义 OpenAI 兼容或通用 POST 接口
-- Agent 可通过 `generate_audio` 工具生成音频，并在对话工具结果中直接播放 / 下载。
-- API 密钥保存在 DSH 宿主侧，浏览器与 Agent 不接触明文密钥。
-- 生成历史持久化在 `~/.dsh/dsh-audiogen/`。
-- **资源库**：生成的音频可勾选「加入资源库」（或设置中开启自动保存），按类型分目录存放
-  （`voice/male|female|custom`、`music`、`sfx`、`tts/<音色键>`），每条资源都带完整溯源
-  （渠道、模型与上游 ID、音色 voiceId、提示词、参数快照）。资源库支持搜索、标签、
-  重命名、移动分类、批量管理与详情抽屉（可复制参数 / 复用音色）。
-- **模型对比**：生成页勾选「模型对比」后选择 2-4 个模型，用相同参数逐个生成，
-  结果按模型分组并列展示，便于对比音质/风格。
-- Agent 亦可调用 `search_audio_library` 检索本地资源库，复用已有音色/配乐/音效。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-## 安装
+![npm version](https://img.shields.io/npm/v/dsh-audiogen?style=flat-square&color=8B5CF6)
+![license](https://img.shields.io/npm/l/dsh-audiogen?style=flat-square)
+![DSH plugin](https://img.shields.io/badge/DSH-plugin-brightgreen?style=flat-square)
+![Node](https://img.shields.io/badge/node-%3E%3D20-blue?style=flat-square)
 
-已发布到 npm：
+![Main panel](docs/images/panel-compare.png)
+
+## ✨ Features
+
+- **Four generation modes**: 文本转语音 (TTS) · 音乐生成 (Music) · 音效生成 (Sound effects) · 音色设计 (Voice design)
+- **Multi-vendor channels in one place**: OpenAI-compatible TTS, MiniMax, ElevenLabs, Stability AI, or any custom OpenAI-compatible / generic POST endpoint
+- **Per-channel model & voice catalogs** with one-click discovery, aliases, capability categories and per-model advanced fields (duration, seed, steps, cfg_scale, loop, prompt influence, …)
+- **Model comparison**: same prompt across 2–4 models with per-model parameter overrides — results grouped side by side
+- **✨ Prompt enhancement**: rewrite any rough idea into a ready-to-generate description with an LLM (choose any model from *Settings → Models*; falls back to the agent default model)
+- **History with one-click restore**: prompt, config, model set *and the original audio* come back into the panel — no regeneration, no extra cost
+- **Resource library**: auto-save generated audio (or opt-in per run), organized by type — voices / music / sfx / TTS — with search, tags, rename, category moves, and full provenance (channel, model, voiceId, prompt, params snapshot). Reuse a voice or music bed instead of regenerating
+- **Agent tools**: `generate_audio` and `search_audio_library`, plus bundled session skills — the Agent can generate and find audio on demand
+- **Keys stay local**: API keys live in the local DSH settings document and generation is proxied by the local host; the browser and the Agent never touch plaintext credentials
+
+## 📸 Screenshots
+
+| Generation panel | Model comparison |
+| --- | --- |
+| ![Generation](docs/images/panel-music.png) | ![Compare](docs/images/panel-compare.png) |
+
+| History & restore | Channels settings |
+| --- | --- |
+| ![History](docs/images/history-panel.png) | ![Settings](docs/images/settings-channels.png) |
+
+| Channel editor (model catalog & auto capabilities) | LLM models (Settings → Models) |
+| --- | --- |
+| ![Channel editor](docs/images/settings-stability.png) | ![Models page](docs/images/models-page.png) |
+
+## 📦 Installation
+
+The plugin is published on npm. DSH host (Node ≥ 20) required.
 
 ```bash
 dsh plugin --profile web add dsh-audiogen
-# 或指定版本
-dsh plugin --profile web add dsh-audiogen@0.1.0
 ```
 
-本地开发安装：
+Local development install:
 
 ```bash
 dsh plugin --profile web add /path/to/dsh-audiogen
 ```
 
-安装后重启 `dsh web`，侧边栏出现「AI 音频」。打开「设置 → 插件 → AI 音频」，添加一个厂商渠道并填写 API 地址、密钥、模型/音色后即可使用。
+Restart `dsh web` after install — the sidebar will show **AI 音频**.
 
-## Agent 工具
+## 🚀 Quick start
 
-| 工具 | 用途 |
+1. Open **Settings → Plugins → AI 音频**
+2. Add a channel: pick a preset provider (+ Add provider) or a custom endpoint (+ Add custom provider)
+3. Fill in the API URL, API key, and the model/voice catalog (use *Fetch available models* to import them)
+4. Save, then open the **AI 音频** sidebar panel:
+   - choose a mode (TTS / Music / SFX / Voice design)
+   - type your text or prompt (optional: ✨ 增强提示词)
+   - pick a model — or tick 模型对比 for 2–4 models at once
+   - hit **开始生成** and play the results, download them, or add them to the 资源库
+
+## 🎛 Modes supported by each vendor
+
+| Mode | MiniMax | ElevenLabs | Stability AI | OpenAI-compatible / custom |
+| --- | --- | --- | --- | --- |
+| TTS | ✅ (8 voices) | ✅ (voices + streams) | — | ✅ |
+| Music | ✅ (`music-3.0` / `music-2.6` / `music-cover`) | ✅ (`music_v2`) | ✅ (`stable-audio-*`) | ✅ (generic POST) |
+| Sound effects | — | ✅ (`eleven_text_to_sound_v2`, loop / prompt_influence) | ✅ (`stable-audio-*` — same text-to-audio protocol, auto-detected in music + SFX) | ✅ (generic POST) |
+| Voice design | ✅ (`/v1/voice_design`) | ✅ (`/v1/text-to-voice/design`) | — | — |
+
+## 🤖 Agent usage
+
+| Tool | Purpose |
 | --- | --- |
-| `generate_audio` | 提交 TTS / 音乐 / 音效生成，等待完成后返回同源音频 URL；可选 `save_to_library` 入库。 |
-| `search_audio_library` | 检索本地资源库（类型/分类/关键词），返回资源、溯源与音频 URL。 |
+| `generate_audio` | Submit a TTS / music / SFX / voice-design task; waits for completion and returns same-origin audio URLs. Optional `enhance_prompt`, `save_to_library`, per-vendor params. |
+| `search_audio_library` | Search the local resource library (type / category / keyword) and reuse an existing voice, music bed or effect. |
 
-示例：
+Typical session commands (skills bundled with the plugin):
 
 ```text
-/audiogen 生成一段 30 秒的 Lo-fi 背景音乐
 /audio:tts 用温暖的声音朗读这句话
+/audio:music 生成一段 30 秒的 Lo-fi 背景音乐
 /audio:sfx 生成一声科幻风格的 UI 提示音
+/audio:design 一个温暖复古的合成器音色
 ```
 
-## 开发
+## 🔐 Security & data notes
+
+- API keys are stored in the local DSH settings document; requests are proxied by the local host (`/api/dsh-audiogen/*`, loopback-only routes)
+- Generation consumes your upstream provider quota; audio content is produced by the upstream model
+- History & library persist under `~/.dsh/dsh-audiogen/`
+- Prompt enhancement calls the LLM model you choose (default: agent default model) — no extra API key
+
+## 🛠 Development
 
 ```bash
 pnpm install
 pnpm run typecheck
-pnpm run build
+pnpm run build      # outputs lib/ (host + client bundles)
 ```
 
-## 目录
+## 📄 License
 
-```text
-dsh-audiogen/
-├── package.json           # dsh.bundle + dsh.client 声明
-├── cordis.patch.yml       # 插件行
-├── src/
-│   ├── index.ts           # 宿主插件
-│   ├── protocol.ts        # 共享协议
-│   ├── audio-engine.ts    # 多厂商生成引擎
-│   ├── audio-presets.ts   # 预置厂商
-│   ├── audio-store.ts     # 音频/历史持久化
-│   ├── routes.ts          # /api/dsh-audiogen/*
-│   ├── agent-audio-tools.ts
-│   └── client/            # 浏览器端：侧边栏、设置卡片、面板、工具视图
-└── skills/                # 建议的会话技能定义（TTS / music / sfx / design）
-```
-
-## 许可证
-
-Apache-2.0
+[Apache-2.0](LICENSE)
