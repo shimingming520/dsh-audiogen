@@ -14,7 +14,7 @@ import { globalFieldSpecs, overrideRowSpecs, presetLabel, type FieldSpec } from 
 import { tt } from './helpers.ts'
 import {
   HISTORY_API,
-  type AudioMode, type GeneratedAudio, type GenerateAudioRequest, type HistoryEntry, type LibraryEntry,
+  type AudioMode, type GeneratedAudio, type GenerateAudioRequest, type HistoryAudioRef, type HistoryEntry, type LibraryEntry,
 } from '../protocol.ts'
 import type { ModelOption } from './settings-scope.ts'
 import { AudioPlayer } from './audio-player.tsx'
@@ -159,6 +159,11 @@ function useHistory(): { entries: HistoryEntry[]; reload: () => void; clear: () 
 
 function dataUrlOf(audio: GeneratedAudio): string {
   return `data:${audio.mime};base64,${audio.b64}`
+}
+
+/** 结果卡片音频源：优先同源 URL（历史恢复的音频只有 URL 没有 b64），无 URL 再回退 data URL。 */
+function srcOf(audio: GeneratedAudio): string {
+  return audio.url !== '' ? audio.url : dataUrlOf(audio)
 }
 
 function fileNameOf(url: string): string {
@@ -534,8 +539,9 @@ export function StudioView(props: {
   }
 
   /** 从历史参数回填表单（参考 AI 生图「恢复」）：配置 + prompt 一键复用。
-   *  compareModelsRestore：对比任务恢复为对比模式；overridesRestore 由各模型 params 差异重建。 */
-  const restoreFromParams = (params: Record<string, unknown>, modeValue: AudioMode, singleModel: string, compareModelsRestore?: string[], overridesRestore?: Record<string, Record<string, string>>): void => {
+   *  compareModelsRestore：对比任务恢复为对比模式；overridesRestore 由各模型 params 差异重建；
+   *  restoredGroups：把历史音频以「已完成任务」形式放回结果列，可直接试听/下载而无需重新生成。 */
+  const restoreFromParams = (params: Record<string, unknown>, modeValue: AudioMode, singleModel: string, compareModelsRestore?: string[], overridesRestore?: Record<string, Record<string, string>>, restoredGroups?: Array<{ model: string; audio: GeneratedAudio[] }>): void => {
     const str = (key: string): string | undefined => {
       const v = params[key]
       return typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined
@@ -609,8 +615,38 @@ export function StudioView(props: {
     if (channelIdValue !== undefined && modeValue === 'voice_design') setDesignChannelId(channelIdValue)
     // 恢复对比任务时重建每模型参数覆盖（各模型 params 与第一项的差异）；单条恢复清空覆盖。
     setOverrides(overridesRestore ?? {})
-    props.showToast('已恢复该次生成的配置，可直接再次生成')
+    // 把历史音频以「已完成任务」放回结果列（不重新生成，直接用同源 URL 试听/下载）。
+    if (restoredGroups !== undefined && restoredGroups.length > 0) {
+      const now = Date.now()
+      const total = restoredGroups.reduce((sum, group) => sum + group.audio.length, 0)
+      const restoredTask: StudioTask = {
+        id: `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        mode: modeValue,
+        kind: restoredGroups.length > 1 ? 'compare' : 'single',
+        prompt: promptValue ?? '',
+        label: restoredGroups.length > 1 ? `对比 ${restoredGroups.map(group => group.model).join(' / ')}` : restoredGroups[0]!.model,
+        status: 'done',
+        progress: { done: total, total, current: '' },
+        startedAt: now,
+        finishedAt: now,
+        groups: restoredGroups.map(group => ({ model: group.model, state: 'done' as const, outputs: group.audio })),
+      }
+      setTasks(current => [restoredTask, ...current])
+    }
+    props.showToast(restoredGroups !== undefined && restoredGroups.length > 0 ? '已恢复配置与音频（历史结果已放回中间栏）' : '已恢复该次生成的配置，可直接再次生成')
   }
+
+  /** 历史音频引用 → 结果列卡片可用的音频对象（复用同源 URL，不重新生成）。 */
+  const historyAudioToGenerated = (entryId: string, refs: HistoryAudioRef[]): GeneratedAudio[] =>
+    refs.map((ref, index) => ({
+      id: `${entryId}-${index}`,
+      file: '',
+      b64: '',
+      mime: ref.mime,
+      bytes: 0,
+      url: ref.url,
+      ...(ref.voiceId === undefined ? {} : { voiceId: ref.voiceId }),
+    }))
 
   /** 由对比历史条目重建每模型参数覆盖：以第一项为全局基准，其余条目与基准不同的字段即覆盖。 */
   const overridesOfCompare = (models: Array<{ model: string; entry: HistoryEntry }>): Record<string, Record<string, string>> => {
@@ -833,9 +869,9 @@ export function StudioView(props: {
           ) : null}
           <span className={css.audioCardIndex}>#{index + 1}</span>
         </div>
-        <AudioPlayer src={dataUrlOf(audio)} itemKey={`${label}-${audio.id}`} />
+        <AudioPlayer src={srcOf(audio)} itemKey={`${label}-${audio.id}`} />
         <div className={css.audioCardActions}>
-          <a className={css.ghostButton} href={dataUrlOf(audio)} download={`generated-${index + 1}.${audio.mime.split('/')[1]?.replace('mpeg', 'mp3') ?? 'mp3'}`}>
+          <a className={css.ghostButton} href={srcOf(audio)} download={`generated-${index + 1}.${audio.mime.split('/')[1]?.replace('mpeg', 'mp3') ?? 'mp3'}`}>
             <DownloadIcon /> 下载
           </a>
           {saved ? (
@@ -1257,6 +1293,7 @@ export function StudioView(props: {
                           item.models[0]?.model ?? '',
                           item.models.map(model => model.model),
                           overridesOfCompare(item.models),
+                          item.models.map(model => ({ model: model.model, audio: historyAudioToGenerated(model.entry.id, model.entry.audio) })),
                         )}>↺</button>
                         <button type="button" className={css.historyIcon} title="删除整个对比任务" onClick={() => void deleteHistoryEntries(item.models.map(model => model.entry.id))}>✕</button>
                       </div>
@@ -1277,6 +1314,9 @@ export function StudioView(props: {
                         (entry.params ?? {}) as Record<string, unknown>,
                         entry.mode,
                         entry.model,
+                        undefined,
+                        undefined,
+                        [{ model: entry.model, audio: historyAudioToGenerated(entry.id, entry.audio) }],
                       )}>↺</button>
                       <button type="button" className={css.historyIcon} title="删除这条记录" onClick={() => void deleteHistoryEntries([entry.id])}>✕</button>
                       <button type="button" className={css.historyIcon} title="加入资源库" onClick={() => openSaveDialog(audioRefsOfEntry(entry), contextOfEntry(entry))}>
