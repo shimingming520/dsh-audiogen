@@ -4,7 +4,7 @@
  */
 
 import {
-  GENERATE_API, HISTORY_API, LIBRARY_API, TASK_API,
+  ENHANCE_API, GENERATE_API, HISTORY_API, LIBRARY_API, TASK_API,
   type GenerateAudioRequest, type GeneratedAudio, type HistoryEntry,
   type LibraryEntry, type LibrarySaveRequest, type LibraryUpdateRequest,
 } from '../protocol.ts'
@@ -40,6 +40,13 @@ export class AudiogenApi {
   /** 取消进行中的任务：宿主侧中断全部在途上游调用，剩余模型跳过。 */
   async cancelTask(taskId: string): Promise<void> {
     await postJson(TASK_API.cancel, { taskId }).catch(() => { /* best-effort */ })
+  }
+
+  /** 提示词增强（复用 Agent 默认模型）。 */
+  async enhancePrompt(prompt: string, mode: string): Promise<{ ok: boolean; enhanced?: string; code?: string; message?: string }> {
+    const response = await postJson(ENHANCE_API, { prompt, mode })
+    const body = await response.json() as { ok?: boolean; enhanced?: string; code?: string; message?: string }
+    return { ok: body.ok === true, ...(body.enhanced === undefined ? {} : { enhanced: body.enhanced }), ...(body.code === undefined ? {} : { code: body.code }), ...(body.message === undefined ? {} : { message: body.message }) }
   }
 
   async history(): Promise<HistoryEntry[]> {

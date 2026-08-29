@@ -21,6 +21,8 @@ export interface AgentAudioToolConfig {
   autoSaveToLibrary: boolean
   /** 全局并发闸门（与面板路由共享「最大并发生成数」）。 */
   budget?: GenerationBudget
+  /** 提示词增强（复用 Agent 默认模型）；enhance_prompt=true 时在生成前调用。 */
+  enhance?: (prompt: string, mode: AudioMode) => Promise<string>
 }
 
 interface AgentAudioRef {
@@ -157,6 +159,7 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       },
       voice: { type: 'string', description: 'Optional voice id/name for TTS providers. Required for MiniMax TTS (e.g. male-qn-qingse, female-shaonv); fetch the account voices in Settings > Plugins > AI Audio.' },
       preview_text: { type: 'string', description: 'Optional preview text for voice_design.' },
+      enhance_prompt: { type: 'boolean', description: 'Enhance the prompt with the agent default model before generating (uses the configured model settings, no extra key). Best-effort: on failure the original prompt is used.' },
       speed: { type: 'number', description: 'Optional speaking rate / speed multiplier where supported. MiniMax range 0.5-2.0 (default 1).' },
       duration: { type: 'number', description: 'Requested duration in seconds for music/sfx.' },
       lyrics: { type: 'string', description: 'Lyrics for music generation (MiniMax music-3.0/music-cover). Required unless is_instrumental is true. Split verses with an empty line.' },
@@ -302,6 +305,14 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       /** 单模型执行：生成 + 保存文件 + 历史 + 可选资源库；错误收敛为分组结果。 */
       const runOne = async (picked: { channel: AudioChannel; alias: string; upstream: string }): Promise<AgentAudioGroup> => {
         const request = buildRequest(picked)
+        // 可选：生成前用 Agent 默认模型增强 prompt（失败则沿用原文）
+        if (args.enhance_prompt === true && config.enhance !== undefined) {
+          try {
+            request.prompt = await config.enhance(request.prompt, request.mode)
+          } catch {
+            // 增强失败不阻断生成
+          }
+        }
         try {
           // 与面板路由共享全局并发闸门（限流时排队；取消时立即出队）。
           const release = await (config.budget?.acquire(exec.signal) ?? Promise.resolve(() => { /* 默认不限制 */ }))

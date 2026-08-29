@@ -230,6 +230,9 @@ export function StudioView(props: {
   const [bitrate, setBitrate] = useState('')
   const [audioChannel, setAudioChannel] = useState('')
   const [subtitle, setSubtitle] = useState(false)
+  // 提示词增强
+  const [enhancing, setEnhancing] = useState(false)
+  const [enhancePreview, setEnhancePreview] = useState<string | null>(null)
   // Stable Audio 参数（仅 Stability 渠道显示）
   const [seed, setSeed] = useState('')
   const [steps, setSteps] = useState('')
@@ -578,6 +581,28 @@ export function StudioView(props: {
     props.showToast('已恢复该次生成的配置，可直接再次生成')
   }
 
+  /** 调用宿主增强（Agent 默认模型），结果先预览再应用。 */
+  const runEnhance = async (): Promise<void> => {
+    if (prompt.trim() === '') {
+      setError('请先输入文本/提示词，再点击增强')
+      return
+    }
+    setEnhancing(true)
+    setError(null)
+    try {
+      const result = await api.enhancePrompt(prompt.trim(), mode)
+      if (result.ok !== true || result.enhanced === undefined) {
+        setError(result.message ?? '增强失败，请稍后重试')
+        return
+      }
+      setEnhancePreview(result.enhanced)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setEnhancing(false)
+    }
+  }
+
   /** 删除历史记录（对比任务卡删除该任务的全部模型条目）。 */
   const deleteHistoryEntries = async (ids: string[]): Promise<void> => {
     try {
@@ -870,11 +895,29 @@ export function StudioView(props: {
           ))}
         </div>
 
-        <p className={css.formSection}>输入</p>
+        <div className={css.formSectionRow}>
+          <p className={css.formSection}>输入</p>
+          <button type="button" className={css.ghostButton} disabled={enhancing} onClick={() => void runEnhance()}>
+            {enhancing ? '增强中…' : '✨ 增强提示词'}
+          </button>
+        </div>
         <label className={css.label}>
           <span>{mode === 'voice_design' ? '音色描述' : mode === 'tts' ? '文本' : '提示词'}</span>
           <textarea className={css.textarea} value={prompt} onChange={event => setPrompt(event.target.value)} placeholder={tt('prompt.placeholder')} />
         </label>
+        {enhancePreview !== null ? (
+          <div className={css.enhanceCard}>
+            <div className={css.enhanceCardHead}>
+              <strong>增强结果（{modeLabelOf(mode)}）</strong>
+              <span className={css.enhanceActions}>
+                <button type="button" className={css.ghostButton} onClick={() => { setPrompt(enhancePreview); setEnhancePreview(null); props.showToast('已应用增强结果') }}>应用</button>
+                <button type="button" className={css.ghostButton} disabled={enhancing} onClick={() => void runEnhance()}>重新生成</button>
+                <button type="button" className={css.ghostButton} onClick={() => setEnhancePreview(null)}>放弃</button>
+              </span>
+            </div>
+            <textarea className={css.textarea} value={enhancePreview} readOnly />
+          </div>
+        ) : null}
 
         {mode === 'voice_design' ? (
           <>

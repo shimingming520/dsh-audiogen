@@ -1278,3 +1278,39 @@
     min-height: 320px;
   }
 }
+
+/* 提示词增强 */
+.formSectionRow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.formSectionRow .formSection {
+  flex: 1;
+}
+
+.enhanceCard {
+  border: 1px solid var(--dsw-alias-border-l1, #e5e7eb);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--dsw-alias-bg-layer-2, #fafafa);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.enhanceCardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+}
+
+.enhanceActions {
+  display: flex;
+  gap: 6px;
+}

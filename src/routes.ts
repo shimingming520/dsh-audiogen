@@ -16,7 +16,7 @@ import { discoverAudioModels } from './audio-models.ts'
 import { AUDIO_PRESETS } from './audio-presets.ts'
 import { appendHistory, clearHistory, listHistory, readAudioFile, removeHistory, saveAudioFile, listLibrary, saveToLibrary, updateLibraryEntry, removeLibraryEntries, readLibraryFile } from './audio-store.ts'
 import {
-  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, GENERATE_API, HISTORY_API, LIBRARY_API, MODEL_API, PRESETS_API, SETTINGS_API, TASK_API,
+  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, ENHANCE_API, GENERATE_API, HISTORY_API, LIBRARY_API, MODEL_API, PRESETS_API, SETTINGS_API, TASK_API,
   LIBRARY_TYPES,
   type GenerateAudioRequest, type GeneratedAudio, type HistoryEntryInput, type LibraryAudioInput, type LibraryProvenance, type LibraryType,
 } from './protocol.ts'
@@ -47,6 +47,8 @@ export interface AudiogenRoutesDeps {
   autoSave: () => boolean
   /** Global upstream concurrency gate (maxConcurrentGenerations). */
   budget: GenerationBudget
+  /** 提示词增强：调用 Agent 默认模型，返回增强后的文本。 */
+  enhance: (prompt: string, mode: GenerateAudioRequest['mode']) => Promise<string>
 }
 
 function isLoopbackRequest(request: IncomingMessage): boolean {
@@ -526,6 +528,27 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
           taskAborts.delete(taskId)
         }
         writeJson(res, 200, { ok: true, aborted: controllers !== undefined ? controllers.size : 0 })
+      },
+    },
+    // ------------------------------------------------------- prompt enhance
+    {
+      kind: 'exact',
+      path: ENHANCE_API,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req)
+        const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : ''
+        if (prompt === '') {
+          writeJson(res, 200, { ok: false, code: 'bad-request', message: 'prompt is required' })
+          return
+        }
+        const mode = body?.mode === 'music' ? 'music' : body?.mode === 'sfx' ? 'sfx' : body?.mode === 'voice_design' ? 'voice_design' : 'tts'
+        try {
+          const enhanced = await deps.enhance(prompt, mode)
+          writeJson(res, 200, { ok: true, enhanced })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'enhance-failed', message: messageOf(error) })
+        }
       },
     },
     // ----------------------------------------------------------- audio file

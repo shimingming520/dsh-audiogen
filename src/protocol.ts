@@ -24,6 +24,9 @@ export const TASK_API = {
   cancel: '/api/dsh-audiogen/task/cancel',
 } as const
 
+/** Loopback-only prompt enhancement route (uses the agent's default model). */
+export const ENHANCE_API = '/api/dsh-audiogen/prompt/enhance' as const
+
 /** Host-mediated built-in provider catalog (channels the user can instantiate). */
 export const PRESETS_API = '/api/dsh-audiogen/presets' as const
 

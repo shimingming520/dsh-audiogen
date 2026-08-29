@@ -16,8 +16,10 @@ import z from 'schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
-import { AUDIOGEN_SETTINGS_NAMESPACE, type ChannelConfig, type ModelMapping } from './protocol.ts'
+import { AUDIOGEN_SETTINGS_NAMESPACE, type AudioMode, type ChannelConfig, type ModelMapping } from './protocol.ts'
 import { createGenerationBudget } from './audio-scheduler.ts'
+import { enhancePromptText } from './prompt-enhance.ts'
+import { AudioGenError } from './audio-engine.ts'
 import { makeRoutes, type ChannelsView, type SettingsSeam } from './routes.ts'
 import type { AudioChannel } from './audio-engine.ts'
 import { registerAgentAudioTools, type AgentAudioToolConfig } from './agent-audio-tools.ts'
@@ -196,6 +198,13 @@ export function apply(ctx: Context, config?: Config): void {
   // 全局并发闸门：所有上游调用（面板路由 + Agent 工具）共享「最大并发生成数」。
   const budget = createGenerationBudget(() => resolve().maxConcurrentGenerations)
 
+  // 提示词增强：复用 Agent 默认模型（agent-default-model 设置），面板与 Agent 工具共用。
+  const enhance = async (prompt: string, mode: AudioMode): Promise<string> => {
+    const seam = ctx.get('settings') as unknown as SettingsSeam
+    if (seam?.describe === undefined) throw new AudioGenError('设置服务不可用，无法增强提示词', 'settings-unavailable')
+    return enhancePromptText({ settings: seam, llm: () => ctx.get('llm') }, prompt, mode)
+  }
+
   const channelsView = (): ChannelsView => {
     const value = resolve()
     return { channels: value.channels, defaultChannelId: value.defaultChannelId }
@@ -209,6 +218,7 @@ export function apply(ctx: Context, config?: Config): void {
         resolveChannels: channelsView,
         autoSave: () => resolve().autoSaveToLibrary,
         budget,
+        enhance,
       })
       const disposers = routes.map(route => ctx.webServer.register(route))
       return () => { for (const dispose of disposers) dispose() }
@@ -225,6 +235,7 @@ export function apply(ctx: Context, config?: Config): void {
         defaultChannelId: value.defaultChannelId,
         autoSaveToLibrary: value.autoSaveToLibrary,
         budget,
+        enhance,
       }
     }), 'dsh-audiogen: agent audio tools')
   })
