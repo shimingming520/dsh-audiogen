@@ -49,19 +49,36 @@ export async function enhancePromptText(deps: PromptEnhanceDeps, prompt: string,
   if (runtime === undefined || runtime.stream === undefined) {
     throw new AudioGenError('宿主 LLM 服务不可用（ctx.llm 未注册）', 'llm-unavailable')
   }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')), 30_000)
+  timer.unref?.()
   let output = ''
-  for await (const chunk of runtime.stream({
-    provider,
-    model,
-    messages: [{ role: 'user', content: text }],
-    system: instructionsFor(mode),
-    temperature: 0.7,
-    maxTokens: 1200,
-  })) {
-    const record = chunk as { type?: string; text?: string }
-    if (record.type === 'text-delta' && typeof record.text === 'string') output += record.text
+  try {
+    for await (const chunk of runtime.stream({
+      provider,
+      model,
+      messages: [{ role: 'user', content: text }],
+      system: instructionsFor(mode),
+      temperature: 0.7,
+      maxTokens: 1200,
+      signal: controller.signal,
+    })) {
+      const record = chunk as { type?: string; text?: string; block?: { type?: string; text?: string } }
+      if (record.type === 'text-delta' && typeof record.text === 'string') {
+        output += record.text
+      } else if (record.type === 'block-end' && record.block !== undefined
+        && record.block.type === 'text' && typeof record.block.text === 'string') {
+        output += record.block.text
+      }
+    }
+  } finally {
+    clearTimeout(timer)
   }
-  return stripFences(output.trim())
+  const result = stripFences(output.trim())
+  if (result === '') {
+    throw new AudioGenError('模型未返回增强内容：请检查「设置 → 模型」的默认模型是否可用（或稍后重试）', 'enhance-empty-result')
+  }
+  return result
 }
 
 /** 去掉模型可能包裹的 ``` 代码围栏。 */

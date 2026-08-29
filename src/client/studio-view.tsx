@@ -527,6 +527,8 @@ export function StudioView(props: {
     }
     const bool = (key: string): boolean | undefined => typeof params[key] === 'boolean' ? params[key] as boolean : undefined
     setMode(modeValue)
+    const promptValue = str('prompt')
+    if (promptValue !== undefined) setPrompt(promptValue)
     const modelValue = str('model') ?? singleModel
     if (modelValue !== '') setModel(modelValue)
     if (compareModelsRestore !== undefined && compareModelsRestore.length > 0) {
@@ -591,11 +593,11 @@ export function StudioView(props: {
     setError(null)
     try {
       const result = await api.enhancePrompt(prompt.trim(), mode)
-      if (result.ok !== true || result.enhanced === undefined) {
+      if (result.ok !== true || result.enhanced === undefined || result.enhanced.trim() === '') {
         setError(result.message ?? '增强失败，请稍后重试')
         return
       }
-      setEnhancePreview(result.enhanced)
+      setEnhancePreview(result.enhanced.trim())
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -895,16 +897,16 @@ export function StudioView(props: {
           ))}
         </div>
 
-        <div className={css.formSectionRow}>
-          <p className={css.formSection}>输入</p>
-          <button type="button" className={css.ghostButton} disabled={enhancing} onClick={() => void runEnhance()}>
-            {enhancing ? '增强中…' : '✨ 增强提示词'}
-          </button>
-        </div>
+        <p className={css.formSection}>输入</p>
         <label className={css.label}>
           <span>{mode === 'voice_design' ? '音色描述' : mode === 'tts' ? '文本' : '提示词'}</span>
           <textarea className={css.textarea} value={prompt} onChange={event => setPrompt(event.target.value)} placeholder={tt('prompt.placeholder')} />
         </label>
+        <div className={css.enhanceActionsRow}>
+          <button type="button" className={css.ghostButton} disabled={enhancing} onClick={() => void runEnhance()}>
+            {enhancing ? '增强中…' : '✨ 增强提示词'}
+          </button>
+        </div>
         {enhancePreview !== null ? (
           <div className={css.enhanceCard}>
             <div className={css.enhanceCardHead}>

@@ -1314,3 +1314,9 @@
   display: flex;
   gap: 6px;
 }
+
+.enhanceActionsRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -4px;
+}
