@@ -25,6 +25,8 @@ export const MAX_CANDIDATES_IN_PROMPT = 80
 const MAX_DESCRIPTION_CHARS = 400
 /** LLM 调用超时。 */
 const RECOMMEND_TIMEOUT_MS = 45_000
+/** 输出 token 预算：默认模型多为推理模型，思考 token 计入输出，需留足预算。 */
+const RECOMMEND_MAX_TOKENS = 8192
 
 /** 需求描述 + 候选池 → top-k 推荐（每条含 LLM 理由）。 */
 export async function recommendVoices(
@@ -69,7 +71,7 @@ export async function recommendVoices(
       messages: [{ role: 'user', content: [{ type: 'text', text: messages.user }] }],
       system: messages.system,
       temperature: 0.2,
-      maxTokens: 1600,
+      maxTokens: RECOMMEND_MAX_TOKENS,
       signal: controller.signal,
     })) {
       const record = chunk as { type?: string; text?: string; block?: { type?: string; text?: string }; reason?: { kind?: string; failure?: { message?: string; code?: string } } }
@@ -105,36 +107,97 @@ export async function recommendVoices(
   return recommendations
 }
 
-/** 纯函数：解析 LLM JSON 响应并把 voice_id 校验为候选池成员；无效/编造 id 丢弃。 */
+/** 纯函数：解析 LLM 响应并把推荐校验为候选池成员；无效/编造 id 丢弃。
+ *
+ * 兼容三种返回形态（模型并不总守 JSON）：
+ *  1. JSON {"recommendations": [{"voice_id"|"voice_name": "...", "reason": "..."}]}
+ *  2. JSON 数组 [{"voice_id": "..."}, ...] 或单对象 {"voice_id": "..."}
+ *  3. 纯文本：按行/逗号/空白切分后，在候选池中做完全匹配（id 或 name，忽略大小写）
+ */
 export function parseVoiceRecommendations(
   content: string,
   candidates: VendorVoiceEntry[],
   topK: number,
 ): VoiceRecommendation[] {
-  const candidateById = new Map<string, VendorVoiceEntry>()
-  for (const candidate of candidates) candidateById.set(String(candidate.voice_id), candidate)
-
-  const data = loadJsonLoose(content)
-  if (data === null || typeof data !== 'object' || Array.isArray(data)) return []
-  const rawItems = (data as Record<string, unknown>).recommendations
-  if (!Array.isArray(rawItems)) return []
-
   const limit = Math.max(1, Math.floor(Number.isFinite(topK) ? topK : 5))
   const results: VoiceRecommendation[] = []
   const seen = new Set<string>()
-  for (const item of rawItems) {
-    if (results.length >= limit) break
-    if (typeof item !== 'object' || item === null || Array.isArray(item)) continue
-    const record = item as Record<string, unknown>
-    const voiceId = String(record.voice_id ?? '').trim()
-    if (voiceId === '' || seen.has(voiceId)) continue
-    const candidate = candidateById.get(voiceId)
-    if (candidate === undefined) continue
-    seen.add(voiceId)
-    results.push({
-      ...candidate,
-      reason: typeof record.reason === 'string' && record.reason.trim() !== '' ? record.reason.trim() : '',
-    })
+
+  const findCandidate = (raw: string): VendorVoiceEntry | undefined => {
+    const needle = String(raw).trim()
+    if (needle === '') return undefined
+    const byId = candidates.find(candidate => candidate.voice_id === needle)
+    if (byId !== undefined) return byId
+    const byName = candidates.find(candidate => candidate.name.toLowerCase() === needle.toLowerCase())
+    if (byName !== undefined) return byName
+    // 宽松：候选 id 大小写不同、或名字带空格差异
+    const normalized = needle.toLowerCase().replace(/\s+/g, ' ')
+    return candidates.find(candidate =>
+      candidate.voice_id.toLowerCase() === normalized
+      || candidate.name.toLowerCase().replace(/\s+/g, ' ') === normalized)
+  }
+
+  const push = (candidate: VendorVoiceEntry | undefined, reason: string): void => {
+    if (candidate === undefined || results.length >= limit) return
+    if (seen.has(candidate.voice_id)) return
+    seen.add(candidate.voice_id)
+    results.push({ ...candidate, reason })
+  }
+
+  const data = loadJsonLoose(content)
+  const rawItems = data === null ? undefined
+    : Array.isArray(data) ? data
+      : typeof data === 'object' ? (data as Record<string, unknown>).recommendations
+        : undefined
+
+  if (Array.isArray(rawItems)) {
+    for (const item of rawItems) {
+      if (results.length >= limit) break
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) continue
+      const record = item as Record<string, unknown>
+      const raw = record.voice_id ?? record.voice_name ?? record.name ?? record.id
+      const reason = typeof record.reason === 'string' ? record.reason.trim() : ''
+      push(findCandidate(String(raw)), reason)
+    }
+  }
+
+  // 纯文本兜底 / JSON 未解析出足够的推荐时：优先子串匹配（按出现顺序），
+  // 再按切分 token 完全匹配，两者都做候选池校验。
+  if (results.length < limit) {
+    const flat = content.replace(/```[a-zA-Z]*/g, ' ')
+    const lower = flat.toLowerCase()
+    // 1) 候选 id/name 整体出现在输出里（长名称不会被分词拆散）
+    const found = candidates
+      .filter(candidate => {
+        if (candidate.voice_id.length >= 3 && lower.includes(candidate.voice_id.toLowerCase())) return true
+        if (candidate.name.length >= 3 && lower.includes(candidate.name.toLowerCase())) return true
+        return false
+      })
+      .sort((a, b) => {
+        const ai = lower.indexOf(a.voice_id.toLowerCase())
+        const aiAlt = lower.indexOf(a.name.toLowerCase())
+        const bi = lower.indexOf(b.voice_id.toLowerCase())
+        const biAlt = lower.indexOf(b.name.toLowerCase())
+        const posA = ai === -1 ? aiAlt : ai === -1 ? ai : ai
+        const posB = bi === -1 ? biAlt : bi === -1 ? bi : bi
+        return (posA === -1 ? Number.MAX_SAFE_INTEGER : posA) - (posB === -1 ? Number.MAX_SAFE_INTEGER : posB)
+      })
+    for (const candidate of found) {
+      if (results.length >= limit) break
+      push(candidate, '')
+    }
+    // 2) 切分 token 完全匹配（英文名字被拆成单词时兜底）
+    if (results.length < limit) {
+      const tokens = flat
+        .replace(/[{}[\],:;"'`\n，。！？、；：（）()【】《》]+/g, ' ')
+        .split(/\s+/)
+        .map(token => token.trim())
+        .filter(token => token !== '')
+      for (const token of tokens) {
+        if (results.length >= limit) break
+        push(findCandidate(token), '')
+      }
+    }
   }
   return results
 }
@@ -145,17 +208,26 @@ export function buildRecommendMessages(
   candidates: VendorVoiceEntry[],
   topK: number,
 ): { system: string; user: string } {
-  const shown = candidates.slice(0, MAX_CANDIDATES_IN_PROMPT)
+  // 稳定优先：把带语义线索（语言/性别/年龄/口音/描述）的候选放前面，
+  // 让模型在前 80 条里能看到可判断的信息，而不是一堆无描述的自建音色。
+  const semantic = (entry: VendorVoiceEntry): boolean =>
+    (entry.language !== undefined && entry.language !== '')
+    || (entry.gender !== undefined && entry.gender !== '')
+    || (entry.age !== undefined && entry.age !== '')
+    || (entry.accent !== undefined && entry.accent !== '')
+    || (entry.description !== undefined && entry.description !== '')
+  const ordered = [...candidates].sort((a, b) => (semantic(a) === semantic(b) ? 0 : semantic(a) ? -1 : 1))
+  const shown = ordered.slice(0, MAX_CANDIDATES_IN_PROMPT)
   const note = candidates.length > shown.length
     ? `（注意：共 ${candidates.length} 条候选，仅展示前 ${shown.length} 条，其余候选未展示，请只从展示列表中挑选，或先用筛选条件缩小候选集。）`
     : ''
   const system = [
     '你是资深配音选角专家。根据用户描述的需求，从候选音色列表中挑选最合适的音色。',
     '要求：',
-    '1. 只从候选列表中选，voice_id 必须与候选完全一致，不得编造。',
+    '1. 只从候选列表中选，voice_id 必须与候选完全一致，不得编造。如果候选只有音色名没有语义字段，请结合名字里的语言/性别/年龄线索判断（如 Male_Young_、Chinese (Mandarin)_ 前缀）。',
     '2. 综合考虑语言、性别、年龄感、音色气质与需求的匹配度，以及配音用途（旁白/角色/广告/游戏等）。',
-    `3. 输出 JSON：{"recommendations": [{"voice_id": "...", "reason": "简短中文理由"}]}，最多 ${Math.max(1, Math.floor(topK))} 条，按推荐优先级排序。`,
-    '4. 同需求下避免推荐多个明显同质的音色。',
+    `3. 只输出一个 JSON 对象：{"recommendations": [{"voice_id": "候选中的精确 voice_id", "reason": "简短中文理由"}]}，最多 ${Math.max(1, Math.floor(topK))} 条，按推荐优先级排序；候选的 voice_id 与 voice_name 可能相同或不同，一律用 voice_id 字段。`,
+    '4. 同需求下避免推荐多个明显同质的音色；不要输出 JSON 以外的任何文字。',
   ].join('\n')
   const compact = shown.map(entry => ({
     voice_id: entry.voice_id,

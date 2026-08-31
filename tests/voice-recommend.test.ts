@@ -82,8 +82,36 @@ test('parseVoiceRecommendations 容忍围栏与前后噪声', () => {
   assert.equal(result[0]!.voice_id, '50lF5fQMqcxbDQOW6qOs')
 })
 
+test('parseVoiceRecommendations 支持按 voice_name 匹配（模型返回音色名而非 id）', () => {
+  const content = JSON.stringify({
+    recommendations: [
+      { voice_name: 'Bright Alice', reason: '清亮少女音' },
+      { voice_name: 'Sarcastic Nigel', reason: '英式讽刺' },
+    ],
+  })
+  const result = parseVoiceRecommendations(content, candidates, 5)
+  assert.equal(result.length, 2)
+  assert.equal(result[0]!.voice_id, 'aBC12')
+  assert.equal(result[1]!.voice_id, '50lF5fQMqcxbDQOW6qOs')
+})
+
+test('parseVoiceRecommendations 纯文本兜底：模型只输出音色名列表', () => {
+  const content = '我认为最合适的是 Bright Alice，其次是 Sarcastic Nigel。'
+  const result = parseVoiceRecommendations(content, candidates, 5)
+  assert.equal(result.length, 2)
+  assert.equal(result[0]!.voice_id, 'aBC12')
+  assert.equal(result[1]!.voice_id, '50lF5fQMqcxbDQOW6qOs')
+})
+
+test('parseVoiceRecommendations 顶级对象/数组形态也能解析', () => {
+  const objectForm = JSON.stringify({ voice_id: 'aBC12', reason: '少女音' })
+  assert.equal(parseVoiceRecommendations(objectForm, candidates, 5)[0]!.voice_id, 'aBC12')
+  const arrayForm = JSON.stringify([{ voice_id: 'aBC12' }, { voice_id: '50lF5fQMqcxbDQOW6qOs' }])
+  assert.equal(parseVoiceRecommendations(arrayForm, candidates, 5).length, 2)
+})
+
 test('parseVoiceRecommendations 对垃圾输入返回空', () => {
-  assert.deepEqual(parseVoiceRecommendations('not json at all', candidates, 5), [])
+  assert.deepEqual(parseVoiceRecommendations('not json at all and no candidate names', candidates, 5), [])
   assert.deepEqual(parseVoiceRecommendations('{"recommendations": "xx"}', candidates, 5), [])
 })
 
