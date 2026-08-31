@@ -16,6 +16,8 @@ export interface GenerateResponse {
   historyError?: string
   /** Resource-library entries created by the generation (auto-save). */
   resources?: Array<{ id: string; name: string; type: string }>
+  /** 引擎兜底提示（如：未提供歌词时按纯音乐生成）。 */
+  note?: string
   code?: string
   message?: string
 }

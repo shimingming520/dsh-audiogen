@@ -424,6 +424,8 @@ export function StudioView(props: {
       props.showToast('已保存到资源库')
       props.onLibraryChanged()
     }
+    // 引擎兜底提示（如未提供歌词时自动按纯音乐生成），最后展示避免被覆盖。
+    if (response.note !== undefined && response.note.trim() !== '') props.showToast(response.note)
     reload()
     return generated
   }

@@ -515,7 +515,12 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
               // library-save is best-effort: generation and history already succeeded
             }
           }
-          writeJson(res, 200, { ok: true, outputs: generated, history, ...(resources === undefined ? {} : { resources }) })
+          // ---- 音乐兜底提示：未提供歌词时引擎按纯音乐生成，告知前端一声 ----
+          const instrumentalFallback = request.mode === 'music'
+            && request.isInstrumental !== true
+            && (request.lyrics === undefined || request.lyrics.trim() === '')
+          const note = instrumentalFallback ? '未提供歌词，已按纯音乐生成' : undefined
+          writeJson(res, 200, { ok: true, outputs: generated, history, ...(resources === undefined ? {} : { resources }), ...(note === undefined ? {} : { note }) })
         } catch (error) {
           const code = error instanceof AudioGenError ? error.code : 'generate-failed'
           writeJson(res, 200, { ok: false, code, message: messageOf(error) })

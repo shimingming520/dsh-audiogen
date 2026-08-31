@@ -245,7 +245,7 @@ async function openAITTS(channel: AudioChannel, request: GenerateAudioRequest, s
   return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
 }
 
-async function elevenLabs(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
+async function elevenLabsOfficial(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   const base = endpointBase(channel.apiUrl)
   const model = (request.upstream ?? request.model) || 'eleven_multilingual_v2'
   // 官方使用 xi-api-key；额外携带 Authorization Bearer 以兼容 New API 类网关。
@@ -299,17 +299,20 @@ async function elevenLabs(channel: AudioChannel, request: GenerateAudioRequest, 
 
   // ------------- ElevenLabs Music（POST /v1/music） -------------
   // 模型：music_v1 / music_v2；prompt 与 composition_plan 二选一（引擎用 prompt）。
+  // 未提供歌词时按纯音乐处理（force_instrumental=true），不再要求必须有歌词。
   if (request.mode === 'music') {
     const endpoint = `${base}/music`
     const musicModel = (request.upstream ?? request.model) || 'music_v1'
+    const lyrics = request.lyrics?.trim() ?? ''
+    const instrumental = request.isInstrumental === true || lyrics === ''
     const body: Record<string, unknown> = {
       model_id: musicModel,
       prompt: request.prompt,
       ...(request.duration !== undefined && Number.isFinite(request.duration)
         ? { music_length_ms: Math.round(Math.min(600_000, Math.max(3_000, request.duration * 1000))) }
         : {}),
-      ...(request.lyrics !== undefined && request.lyrics.trim() !== '' ? { lyrics_text: request.lyrics.trim() } : {}),
-      ...(request.isInstrumental !== undefined ? { force_instrumental: request.isInstrumental } : {}),
+      ...(lyrics === '' ? {} : { lyrics_text: lyrics }),
+      ...(instrumental ? { force_instrumental: true } : {}),
     }
     const response = await fetchWithTimeout(endpoint, {
       method: 'POST',
@@ -377,6 +380,146 @@ async function elevenLabs(channel: AudioChannel, request: GenerateAudioRequest, 
     signal,
   }, UPSTREAM_TIMEOUT_MS)
   return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+}
+
+/**
+ * 官方 ElevenLabs 请求被网关拒绝的信号:官方路径未映射(404 Invalid URL)或
+ * 网关要求 Bearer 认证而非 xi-api-key(401/403 Invalid token / Invalid API key)。
+ * New API 类中转(如 ai.farmmx.com)对 ElevenLabs 官方协议通常返回这类错误。
+ */
+function isGatewayRouteMiss(error: unknown): boolean {
+  return error instanceof AudioGenError
+    && error.code === 'audio-api-error'
+    && /\bHTTP (404|401|403)\b/.test(error.message)
+    && /\bInvalid URL\b|\bInvalid token\b|\bInvalid API key\b/i.test(error.message)
+}
+
+/** 网关兼容形态的请求头:仅 Bearer(携带 xi-api-key 会被网关按官方协议校验而 401)。 */
+function gatewayHeaders(apiKey: string): Record<string, string> {
+  return {
+    authorization: `Bearer ${apiKey.trim()}`,
+    'content-type': 'application/json',
+    accept: 'audio/mpeg, application/json',
+  }
+}
+
+/** /audio/speech 兼容端点:base 已以此结尾时直接复用,否则拼接。 */
+function speechGatewayEndpoint(base: string): string {
+  return /\/audio\/speech(\?|$)/i.test(base) ? base : `${base}/audio/speech`
+}
+
+/**
+ * ElevenLabs 渠道的网关兼容形态(OpenAI 风格):路径用 /audio/speech(音效/TTS)
+ * 或 /music(音乐),认证用 Bearer、模型用 `model` 字段。
+ *
+ * 适配未映射 ElevenLabs 官方端点(404 Invalid URL)或要求 Bearer 认证
+ * (401 Invalid token)的 New API 类中转,如 ai.farmmx.com。
+ */
+async function elevenLabsGatewayCompat(
+  channel: AudioChannel,
+  request: GenerateAudioRequest,
+  signal?: AbortSignal,
+): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
+  const base = endpointBase(channel.apiUrl)
+  const headers = gatewayHeaders(channel.apiKey)
+
+  // music → POST /music(Bearer + model;官方形态在此类网关上是 401 Invalid token)。
+  if (request.mode === 'music') {
+    const endpoint = /\/music(\?|$)/i.test(base) ? base : `${base}/music`
+    const musicModel = (request.upstream ?? request.model) || 'music_v1'
+    const lyrics = request.lyrics?.trim() ?? ''
+    const instrumental = request.isInstrumental === true || lyrics === ''
+    const body: Record<string, unknown> = {
+      model: musicModel,
+      prompt: request.prompt,
+      ...(request.duration !== undefined && Number.isFinite(request.duration)
+        ? { music_length_ms: Math.round(Math.min(600_000, Math.max(3_000, request.duration * 1000))) }
+        : {}),
+      ...(lyrics === '' ? {} : { lyrics_text: lyrics }),
+      ...(instrumental ? { force_instrumental: true } : {}),
+    }
+    const response = await fetchWithTimeout(endpoint, {
+      method: 'POST',
+      redirect: 'follow',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    }, UPSTREAM_TIMEOUT_MS)
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      throw new AudioGenError(`ElevenLabs music gateway-compatible API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`, 'audio-api-error')
+    }
+    return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+  }
+
+  // 音色设计在网关兼容层没有对应端点,直接给出可操作的错误说明。
+  if (request.mode === 'voice_design') {
+    throw new AudioGenError(
+      '当前网关不支持 ElevenLabs 音色设计端点(POST /v1/text-to-voice/design);该模式请改用 MiniMax 渠道或 ElevenLabs 官方 API。',
+      'voice-design-unsupported',
+    )
+  }
+
+  // sfx / tts → POST /audio/speech(OpenAI 兼容形态;网关把 model=eleven_text_to_sound_v2 映射到音效生成)。
+  const endpoint = speechGatewayEndpoint(base)
+  const isSfx = request.mode === 'sfx'
+  const model = (request.upstream ?? request.model)
+    || (isSfx ? 'eleven_text_to_sound_v2' : 'eleven_multilingual_v2')
+  const body: Record<string, unknown> = isSfx
+    ? {
+        model,
+        text: request.prompt,
+        ...(request.duration !== undefined && Number.isFinite(request.duration)
+          ? { duration_seconds: Math.min(30, Math.max(0.5, request.duration)) }
+          : {}),
+        ...(request.loop !== undefined ? { loop: request.loop } : {}),
+        ...(request.promptInfluence !== undefined && Number.isFinite(request.promptInfluence)
+          ? { prompt_influence: Math.min(1, Math.max(0, request.promptInfluence)) }
+          : {}),
+      }
+    : {
+        model,
+        input: request.prompt,
+        ...(request.voice !== undefined && request.voice.trim() !== '' ? { voice: request.voice.trim() } : {}),
+        response_format: request.format ?? 'mp3',
+        ...(request.speed !== undefined ? { speed: request.speed } : {}),
+      }
+  const response = await fetchWithTimeout(endpoint, {
+    method: 'POST',
+    redirect: 'follow',
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  }, UPSTREAM_TIMEOUT_MS)
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new AudioGenError(
+      `ElevenLabs ${isSfx ? 'sound effects' : 'TTS'} gateway-compatible API error (HTTP ${response.status})${detail === '' ? '' : `: ${detail.slice(0, 300)}`}`,
+      'audio-api-error',
+    )
+  }
+  return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
+}
+
+/**
+ * ElevenLabs 渠道入口:官方端点优先;官方协议被网关(New API 类中转)拒绝时,
+ * 自动改用 OpenAI 兼容形态重试,使同一渠道同时兼容 ElevenLabs 官方 API 与
+ * ai.farmmx.com 类中转。官方地址(api.elevenlabs.io)直连不触发回退。
+ */
+async function elevenLabs(
+  channel: AudioChannel,
+  request: GenerateAudioRequest,
+  signal?: AbortSignal,
+): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
+  if (/elevenlabs\.io/i.test(channel.apiUrl)) {
+    return elevenLabsOfficial(channel, request, signal)
+  }
+  try {
+    return await elevenLabsOfficial(channel, request, signal)
+  } catch (error) {
+    if (!isGatewayRouteMiss(error)) throw error
+  }
+  return elevenLabsGatewayCompat(channel, request, signal)
 }
 
 function minimaxApiBase(base: string): string {
@@ -551,22 +694,19 @@ async function minimax(channel: AudioChannel, request: GenerateAudioRequest, sig
     // audio_setting{format, sample_rate, bitrate}。音频输出配置为固定枚举：
     // format mp3|wav|pcm；sample_rate 16000|24000|32000|44100；
     // bitrate 32000|64000|128000|256000，超出枚举的值回退默认。
+    // 歌词为空时一律按纯音乐生成（is_instrumental=true）：面板/Agent 无论是否
+    // 显式勾选「纯音乐」都能出结果，不再因缺歌词报错。
     const MUSIC_FORMATS = new Set(['mp3', 'wav', 'pcm'])
     const MUSIC_SAMPLE_RATES = new Set([16000, 24000, 32000, 44100])
     const MUSIC_BITRATES = new Set([32000, 64000, 128000, 256000])
     const lyrics = request.lyrics?.trim() ?? ''
-    if (lyrics === '' && request.isInstrumental !== true) {
-      throw new AudioGenError(
-        'MiniMax 音乐生成需要填写歌词，或在面板中勾选「纯音乐（无歌词/人声）」后生成；也可以让面板/Agent 先为提示词创作一段歌词。',
-        'lyrics-required',
-      )
-    }
+    const instrumental = request.isInstrumental === true || lyrics === ''
     const endpoint = `${base}/music_generation`
     const body: Record<string, unknown> = {
       model,
       prompt: request.prompt,
       ...(lyrics === '' ? {} : { lyrics }),
-      ...(request.isInstrumental !== undefined ? { is_instrumental: request.isInstrumental } : {}),
+      ...(instrumental ? { is_instrumental: true } : {}),
       ...(request.duration !== undefined ? { duration: request.duration } : {}),
       audio_setting: {
         format: MUSIC_FORMATS.has(request.format ?? 'mp3') ? (request.format ?? 'mp3') : 'mp3',
