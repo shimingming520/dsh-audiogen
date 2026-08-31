@@ -351,6 +351,29 @@ test('ElevenLabs 网关 404：错误信息带官方地址引导', async () => {
   )
 })
 
+test('语言筛选：ISO 值匹配 MiniMax 语言前缀标签（zh→Chinese/Mandarin）', async () => {
+  installFetch([
+    {
+      url: '/v1/get_voice',
+      method: 'POST',
+      body: {
+        system_voice: [
+          { voice_id: 'Chinese (Mandarin)_Reliable_Executive', voice_name: '沉稳高管' },
+          { voice_id: 'Japanese_CalmLady', voice_name: 'Calm Lady' },
+        ],
+        voice_cloning: [],
+        base_resp: { status_code: 0 },
+      },
+    },
+  ])
+  const zh = await listVendorVoices(minimaxChannel, { language: 'zh' })
+  assert.equal(zh.voices.length, 1)
+  assert.equal(zh.voices[0]!.voice_id, 'Chinese (Mandarin)_Reliable_Executive')
+  const ja = await listVendorVoices(minimaxChannel, { language: 'ja' })
+  assert.equal(ja.voices.length, 1)
+  assert.equal(ja.voices[0]!.voice_id, 'Japanese_CalmLady')
+})
+
 test('不支持的渠道明确报错', async () => {
   await assert.rejects(
     () => listVendorVoices({ ...minimaxChannel, preset: 'stability', apiUrl: 'https://stability.example' }),

@@ -31,6 +31,23 @@ const SOURCE_LABELS: Record<VoiceEntry['source'], string> = {
   shared: '社区共享',
 }
 
+/** 语言下拉：ISO 639-1 值；后端按两套厂商词汇匹配（ElevenLabs ISO / MiniMax 前缀）。 */
+const LANGUAGE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: '', label: '全部' },
+  { value: 'zh', label: '中文（普通话 / 粤语）' },
+  { value: 'en', label: '英语 English' },
+  { value: 'ja', label: '日语 Japanese' },
+  { value: 'ko', label: '韩语 Korean' },
+  { value: 'es', label: '西班牙语 Spanish' },
+  { value: 'fr', label: '法语 French' },
+  { value: 'de', label: '德语 German' },
+  { value: 'ru', label: '俄语 Russian' },
+  { value: 'it', label: '意大利语 Italian' },
+  { value: 'pt', label: '葡萄牙语 Portuguese' },
+  { value: 'ar', label: '阿拉伯语 Arabic' },
+  { value: 'hi', label: '印地语 Hindi' },
+]
+
 function useConfig(scope: AudiogenScope) {
   const [value, setValue] = useState(scope.getSnapshot().value)
   useEffect(() => scope.subscribe(() => { setValue(scope.getSnapshot().value) }), [scope])
@@ -171,7 +188,11 @@ export function VoicesView(props: {
         </label>
         <label className={css.field}>
           <span className={css.fieldLabel}>语言</span>
-          <input className={css.input} value={language} onChange={event => setLanguage(event.target.value)} placeholder="en / zh / ja…" />
+          <select className={css.select} value={language} onChange={event => setLanguage(event.target.value)}>
+            {LANGUAGE_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
         </label>
         <label className={css.field}>
           <span className={css.fieldLabel}>关键词</span>

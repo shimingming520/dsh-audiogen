@@ -70,6 +70,38 @@ export interface SharedVoiceFilters {
 
 const SHARED_VOICE_SORT_OPTIONS = ['most_used', 'random', 'oldest', 'newest'] as const
 
+/**
+ * ISO 639-1 -> matching substrings across the two vendor vocabularies:
+ * ElevenLabs uses ISO codes ("en"), MiniMax system ids use language labels
+ * ("Chinese (Mandarin)_..." / "Japanese_..."). The aliases make one dropdown
+ * value match both. "zh" also covers Cantonese (Chinese (Cantonese)).
+ */
+const LANGUAGE_ALIASES: Record<string, string[]> = {
+  zh: ['zh', 'chinese', 'mandarin', 'cantonese', 'yue'],
+  en: ['en', 'english'],
+  ja: ['ja', 'japanese'],
+  ko: ['ko', 'korean'],
+  es: ['es', 'spanish'],
+  fr: ['fr', 'french'],
+  de: ['de', 'german'],
+  ru: ['ru', 'russian'],
+  it: ['it', 'italian'],
+  pt: ['pt', 'portuguese'],
+  ar: ['ar', 'arabic'],
+  hi: ['hi', 'hindi'],
+}
+
+function languageMatches(language: string | undefined, locale: string | undefined, needle: string): boolean {
+  const haystack = [language ?? '', locale ?? ''].join(' ').toLowerCase()
+  const value = needle.trim().toLowerCase()
+  if (value === '') return true
+  if (haystack.includes(value)) return true
+  for (const alias of LANGUAGE_ALIASES[value] ?? []) {
+    if (haystack.includes(alias)) return true
+  }
+  return false
+}
+
 export interface ListVoicesResult {
   vendor: string
   voices: VendorVoiceEntry[]
@@ -426,10 +458,7 @@ function applyFilter(
   const count = cap(options)
   const matched = entries.filter(entry => {
     if (source !== '' && entry.source !== source) return false
-    if (language !== '') {
-      const haystack = [entry.language ?? '', entry.locale ?? ''].join(' ').toLowerCase()
-      if (!haystack.includes(language)) return false
-    }
+    if (language !== '' && !languageMatches(entry.language, entry.locale, language)) return false
     // Official shared-voice filters double as local fallback filters so they
     // also apply to owned voices and providers without server-side support.
     if (field(filters.accent) !== '' && field(entry.accent) !== field(filters.accent)) return false
