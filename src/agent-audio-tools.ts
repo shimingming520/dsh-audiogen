@@ -14,9 +14,16 @@ import { appendHistory, saveAudioFile, saveToLibrary, listLibrary } from './audi
 import {
   listVendorVoices,
   deleteVendorVoice,
+  isElevenLabs,
   type VendorVoiceEntry,
 } from './voice-manager.ts'
 import type { VoiceRecommendation } from './voice-recommend.ts'
+import {
+  parseCharacterProfiles,
+  prepareVoiceCast,
+  saveVoiceCast,
+  type CastSelectionInput,
+} from './voice-cast.ts'
 import type { AudioMode, GenerateAudioRequest, LibraryType } from './protocol.ts'
 
 export interface AgentAudioToolConfig {
@@ -557,19 +564,42 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
     },
   }))
 
-  /** 厂商音色管理：浏览/筛选 + 按需求描述推荐 + 删除（仅自建）。删除不可逆，必须 confirm=true。 */
+  /** 单条音色条目 schema（voices / candidate_voices 共用）。 */
+  const voiceItemSchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      voice_id: { type: 'string', required: true },
+      name: { type: 'string', required: true },
+      source: { type: 'string', required: true },
+      deletable: { type: 'boolean', required: true },
+      language: { type: 'string' },
+      locale: { type: 'string' },
+      accent: { type: 'string' },
+      gender: { type: 'string' },
+      age: { type: 'string' },
+      use_case: { type: 'string' },
+      category: { type: 'string' },
+      description: { type: 'string' },
+      preview_url: { type: 'string' },
+    },
+  } as const
+
+  /** 厂商音色管理：浏览/筛选 + 按需求描述推荐 + 删除（仅自建）+ 角色选角（cast）。删除不可逆，必须 confirm=true。 */
   const managementDisposer = ctx.tools.register(defineTool({
     name: 'manage_audio_voices',
-    description: 'Manage vendor voice libraries (MiniMax / ElevenLabs). action=list: browse available TTS voices of a channel — official/shared voices plus voices designed/cloned by the account; filtering supports the official /v1/shared-voices server-side filters (search/use_case/accent/gender/age/locale/category/sort/featured/free_users_allowed/descriptive) for the ElevenLabs shared library, plus local language/keyword/source filtering everywhere; returns voice_id/name/source/description/preview_url and whether each voice is deletable. action=recommend: let the agent default model pick the top-k voices for a natural-language requirement (e.g. "17岁清亮甜美的少女音，适合活泼女主角，英式口音") from the same candidate pool — pass requirement (required) and optional top_k (1-10, default 5); returns ranked voices with a short reason each; voice_ids are validated against the pool (hallucinated ids are dropped). action=delete: delete one OWNED voice (custom/owned only; official/shared/system voices are read-only and refused) — irreversible, so confirm must be true (pass the exact voice_id from action=list). Use the returned voice_id with generate_audio (mode=tts, voice=<voice_id>) to speak with the selected voice.',
+    description: 'Manage vendor voice libraries (MiniMax / ElevenLabs). action=list: browse available TTS voices of a channel — official/shared voices plus voices designed/cloned by the account; filtering supports the official /v1/shared-voices server-side filters (search/use_case/accent/gender/age/locale/category/sort/featured/free_users_allowed/descriptive) for the ElevenLabs shared library, plus local language/keyword/source filtering everywhere; returns voice_id/name/source/description/preview_url and whether each voice is deletable. action=recommend: let the agent default model pick the top-k voices for a natural-language requirement (e.g. "17岁清亮甜美的少女音，适合活泼女主角，英式口音") from the same candidate pool — pass requirement (required) and optional top_k (1-10, default 5); returns ranked voices with a short reason each; voice_ids are validated against the pool (hallucinated ids are dropped). action=cast: 角色音色选角第一步 — pass characters (角色画像 JSON 数组/对象/JSON 字符串：character_id, character_name, gender 男/女, age_stage 少年/青年/中年/老年, voice_traits, personality_traits, appearance, sample_lines, dialogue_count, language, use_case) plus optional language/use_case/accent; the tool applies deterministic hard filters per character (gender/age/use_case strict; accent is a preference and is relaxed only when the strict pool is empty) and returns each character\u2019s mapped filters + filtered candidate_voices (primary + backup slots). Then select voices globally in-context (lead/major 角色主音色不要复用), and call action=save_cast with the same characters plus selections [{character_id, voice_id, character_name?, backup_voice_ids?, reason?}] to validate membership, auto-fill backups, flag primary reuse and persist the cast plan to ~/.dsh/dsh-audiogen/cast-selections.json. action=delete: delete one OWNED voice (custom/owned only; official/shared/system voices are read-only and refused) — irreversible, so confirm must be true (pass the exact voice_id from action=list). Use the returned voice_id with generate_audio (mode=tts, voice=<voice_id>) to speak with the selected voice.',
     parameters: {
-      action: { type: 'string', enum: ['list', 'recommend', 'delete'], required: true, description: 'list = browse/filter voices; recommend = pick voices for a requirement with the agent default model; delete = remove an owned voice.' },
+      action: { type: 'string', enum: ['list', 'recommend', 'delete', 'cast', 'save_cast'], required: true, description: 'list = browse/filter voices; recommend = pick voices for a requirement with the agent default model; cast = prepare per-character filtered candidate pools (deterministic hard filters, no LLM); save_cast = validate + persist a cast plan made in-context; delete = remove an owned voice.' },
       channel: { type: 'string', description: 'Channel name or id (e.g. the channel shown in settings). Defaults to the default channel; required when more than one channel is configured.' },
-      language: { type: 'string', description: 'Filter for list/recommend: language substring (ISO code like en/zh/ja, or a label like Chinese (Mandarin)).' },
+      characters: { type: 'json', description: 'Required for cast/save_cast: 角色画像 — JSON array of profile objects, a single profile object, or a JSON string. Each profile: character_id (optional, auto-derived from character_name), character_name (required), gender (男/女 or male/female), age_stage (少年/青年/中年/老年…, string or array), age_stage_source (explicit/appearance_inferred/unknown), voice_traits, personality_traits, appearance (string or string[]), sample_lines ([{text, emotion_hint?}] or text), dialogue_count (number), language (en/zh/ja…), use_case. Convert free-text character descriptions into this structure before calling.' },
+      selections: { type: 'json', description: 'Required for save_cast: the cast plan made by you — JSON array of {character_id, voice_id, character_name?, backup_voice_ids?, reason?}. voice_id must come from the cast action\u2019s candidate_voices; the tool validates membership, fills missing backups, flags lead/major primary reuse and persists to ~/.dsh/dsh-audiogen/cast-selections.json.' },
+      language: { type: 'string', description: 'Filter for list/recommend: language substring (ISO code like en/zh/ja, or a label like Chinese (Mandarin)). For cast: pool language for the candidates (per-character language overrides it).' },
       keyword: { type: 'string', description: 'Filter for list/recommend: free text over voice name/description/accent/use_case.' },
       source: { type: 'string', enum: ['system', 'custom', 'owned', 'shared'], description: 'Filter for list/recommend: MiniMax system/custom; ElevenLabs owned (account) / shared (community).' },
       search: { type: 'string', description: 'Official /v1/shared-voices filter: free-text search over the ElevenLabs shared voice library (ElevenLabs only; local fallback elsewhere).' },
-      use_case: { type: 'string', description: 'Official filter: use case, e.g. characters_animation / conversational / narration / gaming (ElevenLabs shared library).' },
-      accent: { type: 'string', description: 'Official filter: accent, e.g. british / american / australian.' },
+      use_case: { type: 'string', description: 'Official filter: use case, e.g. characters_animation / conversational / narration / gaming (ElevenLabs shared library). For cast: hard filter per character (default characters_animation for ElevenLabs; pass "" to disable).' },
+      accent: { type: 'string', description: 'Official filter: accent, e.g. british / american / australian. For cast: accent is a preference (strict first, relaxed when the strict pool is empty).' },
       gender: { type: 'string', description: 'Official filter: male / female.' },
       age: { type: 'string', description: 'Official filter: age bracket, e.g. adult / young / middle_aged.' },
       locale: { type: 'string', description: 'Official filter: language locale, e.g. en-us / en-gb.' },
@@ -589,7 +619,7 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
         additionalProperties: false,
         properties: {
           status: { type: 'string', required: true, enum: ['ok'] },
-          kind: { type: 'string', required: true, enum: ['list', 'recommend', 'delete'] },
+          kind: { type: 'string', required: true, enum: ['list', 'recommend', 'delete', 'cast', 'save_cast'] },
           vendor: { type: 'string', required: true },
           channel: { type: 'string', required: true },
           count: { type: 'integer' },
@@ -598,23 +628,7 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
           candidate_count: { type: 'integer' },
           voices: {
             type: 'array',
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                voice_id: { type: 'string', required: true },
-                name: { type: 'string', required: true },
-                source: { type: 'string', required: true },
-                deletable: { type: 'boolean', required: true },
-                language: { type: 'string' },
-                accent: { type: 'string' },
-                gender: { type: 'string' },
-                age: { type: 'string' },
-                use_case: { type: 'string' },
-                description: { type: 'string' },
-                preview_url: { type: 'string' },
-              },
-            },
+            items: voiceItemSchema,
           },
           recommendations: {
             type: 'array',
@@ -637,6 +651,99 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
               },
             },
           },
+          // ---- cast / save_cast ----
+          pool_size: { type: 'integer' },
+          use_case_filter: { type: 'string' },
+          accent_preference: { type: 'string' },
+          character_count: { type: 'integer' },
+          characters: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                character: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    character_id: { type: 'string', required: true },
+                    character_name: { type: 'string', required: true },
+                    gender: { type: 'string' },
+                    age_stage: { type: 'array', items: { type: 'string' } },
+                    age_stage_source: { type: 'string' },
+                    voice_traits: { type: 'array', items: { type: 'string' } },
+                    personality_traits: { type: 'array', items: { type: 'string' } },
+                    appearance: { type: 'array', items: { type: 'string' } },
+                    sample_lines: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        additionalProperties: false,
+                        properties: {
+                          text: { type: 'string', required: true },
+                          emotion_hint: { type: 'string' },
+                        },
+                      },
+                    },
+                    dialogue_count: { type: 'integer', required: true },
+                    importance_tier: { type: 'string', required: true },
+                    language: { type: 'string' },
+                    use_case: { type: 'string' },
+                  },
+                },
+                mapped_filters: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    gender: { type: 'string' },
+                    age: { type: 'array', items: { type: 'string' } },
+                    fallback_age: { type: 'array', items: { type: 'string' } },
+                    accent: { type: 'string' },
+                    use_case: { type: 'string' },
+                    language: { type: 'string' },
+                    notes: { type: 'string', required: true },
+                  },
+                },
+                candidate_count: { type: 'integer', required: true },
+                candidate_voices: { type: 'array', required: true, items: voiceItemSchema },
+                note: { type: 'string' },
+              },
+            },
+          },
+          selections: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                character_id: { type: 'string', required: true },
+                character_name: { type: 'string', required: true },
+                voice_id: { type: 'string', required: true },
+                voice_name: { type: 'string', required: true },
+                backup_voice_ids: { type: 'array', items: { type: 'string' }, required: true },
+                reason: { type: 'string', required: true },
+                dialogue_count: { type: 'integer' },
+                importance_tier: { type: 'string' },
+                selection_status: { type: 'string', required: true },
+                issues: { type: 'array', items: { type: 'string' }, required: true },
+                selected_at: { type: 'string' },
+              },
+            },
+          },
+          issues: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                character_id: { type: 'string', required: true },
+                character_name: { type: 'string', required: true },
+                issue: { type: 'string', required: true },
+                detail: { type: 'string', required: true },
+              },
+            },
+          },
+          store_path: { type: 'string' },
           voice_id: { type: 'string' },
           deleted: { type: 'boolean' },
           message: { type: 'string' },
@@ -653,7 +760,56 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
         throw new AudioGenError('AI audio is disabled. Open Settings > Plugins > AI Audio and enable it.', 'plugin-disabled')
       }
       const channel = resolveVoiceManagementChannel(config, args.channel)
-      const action = args.action === 'delete' ? 'delete' : args.action === 'recommend' ? 'recommend' : 'list'
+      const action = args.action === 'delete' ? 'delete'
+        : args.action === 'recommend' ? 'recommend'
+          : args.action === 'cast' ? 'cast'
+            : args.action === 'save_cast' ? 'save_cast'
+              : 'list'
+      // ---- 角色选角：先过滤（cast），后校验落盘（save_cast）——LLM 推理在中间由 Agent 完成。 ----
+      if (action === 'cast' || action === 'save_cast') {
+        const characters = parseCharacterProfiles(args.characters)
+        // ElevenLabs 选角默认硬过滤用途 characters_animation（传 "" 可关闭）；accent 仅是偏好。
+        const defaultUseCase = isElevenLabs(channel) && typeof args.use_case !== 'string' ? 'characters_animation' : undefined
+        const castOptions = {
+          ...(typeof args.use_case === 'string' ? { use_case: args.use_case.trim() } : defaultUseCase === undefined ? {} : { use_case: defaultUseCase }),
+          ...(typeof args.language === 'string' && args.language.trim() !== '' ? { language: args.language.trim() } : {}),
+          ...(typeof args.accent === 'string' && args.accent.trim() !== '' ? { accent: args.accent.trim() } : {}),
+        }
+        if (action === 'cast') {
+          const prepared = await prepareVoiceCast(channel, characters, castOptions)
+          return {
+            status: 'ok' as const,
+            kind: 'cast' as const,
+            vendor: prepared.vendor,
+            channel: prepared.channel,
+            pool_size: prepared.pool_size,
+            use_case_filter: prepared.use_case_filter,
+            accent_preference: prepared.accent_preference,
+            character_count: prepared.character_count,
+            characters: prepared.characters,
+            ...(prepared.note === undefined ? {} : { note: prepared.note }),
+          }
+        }
+        const rawSelections = args.selections
+        const selectionInputs: CastSelectionInput[] = Array.isArray(rawSelections) ? rawSelections as unknown as CastSelectionInput[] : []
+        if (selectionInputs.length === 0) {
+          throw new AudioGenError(
+            'save_cast requires selections — an array of {character_id, voice_id, character_name?, backup_voice_ids?, reason?} matching the cast result',
+            'cast-selections-required',
+          )
+        }
+        const saved = await saveVoiceCast(channel, characters, selectionInputs, castOptions)
+        return {
+          status: 'ok' as const,
+          kind: 'save_cast' as const,
+          vendor: saved.vendor,
+          channel: saved.channel,
+          store_path: saved.store_path,
+          count: saved.count,
+          selections: saved.entries,
+          issues: saved.issues,
+        }
+      }
       if (action === 'list' || action === 'recommend') {
         const source = typeof args.source === 'string' && ['system', 'custom', 'owned', 'shared'].includes(args.source) ? args.source : undefined
         const pick = (value: unknown): string | undefined => typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined

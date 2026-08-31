@@ -82,3 +82,19 @@ MiniMax TTS 的 `voice` 参数需要官方 voice_id；ElevenLabs 的 `voice` 参
 - `recommend-parse-failed`：模型返回的推荐未命中候选池 → 重试，或用语言/关键词先缩小候选集。
 - 删除被拒（`system`/`shared` 只读）：换个 `source=custom`/`owned` 的音色。
 - 拉取失败：渠道 API 地址/密钥错误，或网关不支持音色管理端点（Stability、自定义 OpenAI 兼容渠道无此能力，会明确提示不支持）。
+
+## 角色选角（多角色分配音色）
+
+上面是「一个需求 → 一个音色」。如果用户有一整组角色（小说/游戏配音）要为每个角色分配
+主音色（+备用音色），使用工具的 **action=cast / action=save_cast** 两个动作：
+
+1. `action=cast`：传 `characters`（角色画像 JSON 数组/对象，含 character_name/gender/age_stage/
+   voice_traits/personality_traits/appearance/sample_lines/dialogue_count），工具按性别/年龄/用途做
+   确定性硬过滤（accent 为偏好、候选为空才放松），返回每个角色的候选池。
+2. Agent 在上下文中全局选角（lead/major 角色主音色不要复用；每角色主音色 + 最多 2 个备用）。
+3. `action=save_cast`：传同样的 `characters` + `selections`，工具校验 voice_id 属于候选池、
+   补齐备份、标记复用警告并持久化到 `~/.dsh/dsh-audiogen/cast-selections.json`。
+4. 用选定 `voice_id` 调 `generate_audio` 生成 TTS；无合适音色时先用
+   `generate_audio(mode="voice_design")` 创作专属音色。
+
+完整流程、输入结构示例与约束见 **dsh-audiogen-voice-cast** 技能。

@@ -20,7 +20,8 @@
 - **✨ 提示词增强**：把一句粗略想法扩写成适合生成模型的完整描述，LLM 模型可在「设置 → 模型」中任选（缺省跟随 Agent 默认模型，无需额外 API Key）
 - **历史记录一键恢复**：prompt、配置、模型组合**以及当时的音频**全部回到面板——可直接试听/下载，无需重新生成、不额外消耗
 - **资源库**：生成后可一键入库（或设置自动保存），按类型分目录——音色 voice / 音乐 music / 音效 sfx / TTS——支持搜索、标签、重命名、移动分类，并保留完整溯源（渠道、模型、voiceId、提示词、参数快照）。同款音色/配乐/音效直接复用，不必重复生成
-- **Agent 工具**：`generate_audio`、`search_audio_library` 与 `manage_audio_voices`（厂商音色浏览/删除 + 按需求描述推荐音色），并随包分发 TTS/音乐/音效/音色设计会话技能
+- **Agent 工具**：`generate_audio`、`search_audio_library` 与 `manage_audio_voices`（厂商音色浏览/删除 + 按需求描述推荐音色 + **角色音色选角 cast**），并随包分发 TTS/音乐/音效/音色设计/选角会话技能
+- **角色音色选角（casting）**：为小说/游戏配音逐角色分配主音色 + 备用音色——`manage_audio_voices` 的 `action=cast` 接收角色画像（JSON 数组/对象或文本整理后的 JSON），按性别/年龄/用途做确定性硬过滤（accent 为偏好、候选为空才放松）返回每角色候选池；Agent 在上下文中全局选角（lead/major 主音色不复用）后 `action=save_cast` 校验 voice_id 属于候选池、自动补齐备份、标记复用警告并持久化到 `~/.dsh/dsh-audiogen/cast-selections.json`，随后按选定 `voice_id` 生成 TTS（也可先用 `generate_audio(mode=voice_design)` 为角色创作专属音色）
 - **面板音色管理**：AI 音频面板新增「音色」页 — 浏览/筛选厂商音色（语言/关键词/来源 + ElevenLabs 官方共享库筛选）、按需求描述让 Agent 默认模型推荐音色（如「清亮甜美的少女音」）、试听、删除账户自建音色（需确认）、一键把选定 `voice_id` 回填到 TTS 表单
 - **密钥留在本机**：API 密钥存于本地 DSH 设置文档，生成请求由本地宿主代理转发，浏览器与 Agent 全程不接触明文密钥
 
@@ -79,7 +80,7 @@ dsh plugin --profile web add /path/to/dsh-audiogen
 | 工具 | 用途 |
 | --- | --- |
 | `generate_audio` | 提交 TTS / 音乐 / 音效 / 音色设计任务，等待完成后返回同源音频 URL；支持 `enhance_prompt`、`save_to_library` 与各厂商参数。 |
-| `manage_audio_voices` | 浏览/筛选厂商音色库（MiniMax、ElevenLabs，支持语言/关键词/来源筛选）；按需求描述推荐音色（`action=recommend`，复用 Agent 默认模型，返回音色 + 推荐理由，voice_id 校验为候选池真实成员）；删除账户自有音色（官方/共享/系统音色只读并拒绝）；随后把返回的 `voice_id` 交给 `generate_audio`（mode=tts）即可生成。 |
+| `manage_audio_voices` | 浏览/筛选厂商音色库（MiniMax、ElevenLabs，支持语言/关键词/来源筛选）；按需求描述推荐音色（`action=recommend`，复用 Agent 默认模型，返回音色 + 推荐理由，voice_id 校验为候选池真实成员）；**角色选角**（`action=cast` 传角色画像 → 按性别/年龄/用途硬过滤出每角色候选池，`action=save_cast` 校验落盘）；删除账户自有音色（官方/共享/系统音色只读并拒绝）；随后把返回的 `voice_id` 交给 `generate_audio`（mode=tts）即可生成。 |
 | `search_audio_library` | 检索本地资源库（类型/分类/关键词），复用已有音色、配乐或音效。 |
 
 会话内常用指令（插件自带技能）：
