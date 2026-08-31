@@ -136,7 +136,7 @@ export function globalFieldSpecs(mode: AudioMode, presets: string[]): FieldSpec[
     if (all('sampleRate', MUSIC_KEYS) && presets.length > 0) list.push(specOf('sampleRate'))
     if (all('bitrate', MUSIC_KEYS) && presets.length > 0) list.push(specOf('bitrate'))
   } else if (mode === 'sfx') {
-    list.push(specOf('duration'))
+    list.push({ ...specOf('duration'), hint: '音效时长（秒）：ElevenLabs 为 0.5-30；Stability 按模型的 190 或 380 秒上限' })
     list.push({ ...specOf('format'), options: ['mp3', 'wav', 'pcm'] })
     if (all('loop', SFX_KEYS) && presets.length > 0) list.push(specOf('loop'))
     if (all('promptInfluence', SFX_KEYS) && presets.length > 0) list.push(specOf('promptInfluence'))
