@@ -11,7 +11,8 @@ import { randomUUID } from 'node:crypto'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { SettingsConflictError, settingsNamespace, type SettingsDescriptor } from '@deepseek-ai/dsh-settings'
 import { generateAudio, AudioGenError, type AudioChannel } from './audio-engine.ts'
-import { listVendorVoices, deleteVendorVoice } from './voice-manager.ts'
+import { listVendorVoices, deleteVendorVoice, type ListVoicesOptions, type VendorVoiceEntry } from './voice-manager.ts'
+import { recommendVoices, type VoiceRecommendation } from './voice-recommend.ts'
 import type { GenerationBudget } from './audio-scheduler.ts'
 import { discoverAudioModels } from './audio-models.ts'
 import { AUDIO_PRESETS } from './audio-presets.ts'
@@ -50,6 +51,8 @@ export interface AudiogenRoutesDeps {
   budget: GenerationBudget
   /** 提示词增强：调用 Agent 默认模型，返回增强后的文本。 */
   enhance: (prompt: string, mode: GenerateAudioRequest['mode']) => Promise<string>
+  /** 音色推荐：需求描述 + 候选池 → top-k 推荐（复用 Agent 默认模型）。 */
+  recommend: (requirement: string, candidates: VendorVoiceEntry[], topK: number) => Promise<VoiceRecommendation[]>
   /** 「设置 → 模型」提供方列表 + 各自可广播模型（增强模型下拉候选）。 */
   llmModelOptions: () => Promise<LlmModelOption[]>
 }
@@ -302,9 +305,36 @@ async function mergeLibraryProvenance(
   }
 }
 
+/** 从请求体解析音色列表/推荐共用的筛选选项。 */
+function voiceListOptionsOf(body: Record<string, unknown> | undefined): ListVoicesOptions {
+  const str = (key: string): string | undefined => {
+    const value = body?.[key]
+    return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+  }
+  const filters = {
+    ...(str('search') === undefined ? {} : { search: str('search')! }),
+    ...(str('use_case') === undefined ? {} : { use_case: str('use_case')! }),
+    ...(str('accent') === undefined ? {} : { accent: str('accent')! }),
+    ...(str('gender') === undefined ? {} : { gender: str('gender')! }),
+    ...(str('age') === undefined ? {} : { age: str('age')! }),
+    ...(str('locale') === undefined ? {} : { locale: str('locale')! }),
+    ...(str('category') === undefined ? {} : { category: str('category')! }),
+    ...(str('sort') === undefined ? {} : { sort: str('sort')! }),
+    ...(body?.featured === true ? { featured: true } : {}),
+    ...(body?.free_users_allowed === true ? { free_users_allowed: true } : {}),
+    ...(body?.descriptive === true ? { descriptive: true } : {}),
+  }
+  return {
+    ...(str('language') === undefined ? {} : { language: str('language')! }),
+    ...(str('keyword') === undefined ? {} : { keyword: str('keyword')! }),
+    ...(str('source') === undefined ? {} : { source: str('source')! }),
+    ...(typeof body?.limit === 'number' && Number.isFinite(body.limit) ? { limit: Math.floor(body.limit) } : {}),
+    ...(Object.keys(filters).length === 0 ? {} : { serverFilters: filters }),
+  }
+}
+
 /** Build every /api/dsh-audiogen route. */
-export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
-  const guard = (req: IncomingMessage, res: ServerResponse, method: string): boolean => {
+export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {  const guard = (req: IncomingMessage, res: ServerResponse, method: string): boolean => {
     if (!isLoopbackRequest(req)) {
       writeJson(res, 403, { error: 'forbidden: loopback-only' })
       return false
@@ -404,31 +434,8 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
           writeJson(res, 200, { ok: false, code: 'channel-not-configured', message: '没有可用的音频渠道（需要已配置 API 地址与密钥），请先在设置中添加。' })
           return
         }
-        const str = (key: string): string | undefined => {
-          const value = body?.[key]
-          return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
-        }
-        const filters = {
-          ...(str('search') === undefined ? {} : { search: str('search')! }),
-          ...(str('use_case') === undefined ? {} : { use_case: str('use_case')! }),
-          ...(str('accent') === undefined ? {} : { accent: str('accent')! }),
-          ...(str('gender') === undefined ? {} : { gender: str('gender')! }),
-          ...(str('age') === undefined ? {} : { age: str('age')! }),
-          ...(str('locale') === undefined ? {} : { locale: str('locale')! }),
-          ...(str('category') === undefined ? {} : { category: str('category')! }),
-          ...(str('sort') === undefined ? {} : { sort: str('sort')! }),
-          ...(body?.featured === true ? { featured: true } : {}),
-          ...(body?.free_users_allowed === true ? { free_users_allowed: true } : {}),
-          ...(body?.descriptive === true ? { descriptive: true } : {}),
-        }
         try {
-          const result = await listVendorVoices(channel, {
-            ...(str('language') === undefined ? {} : { language: str('language')! }),
-            ...(str('keyword') === undefined ? {} : { keyword: str('keyword')! }),
-            ...(str('source') === undefined ? {} : { source: str('source')! }),
-            ...(typeof body?.limit === 'number' && Number.isFinite(body.limit) ? { limit: Math.floor(body.limit) } : {}),
-            ...(Object.keys(filters).length === 0 ? {} : { serverFilters: filters }),
-          })
+          const result = await listVendorVoices(channel, voiceListOptionsOf(body))
           writeJson(res, 200, {
             ok: true,
             vendor: result.vendor,
@@ -468,6 +475,49 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
           writeJson(res, 200, { ok: true, ...result })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'voice-delete-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // ------------------------------------------ vendor voice recommend (LLM)
+    {
+      kind: 'exact',
+      path: VOICES_API.recommend,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req) as Record<string, unknown> | undefined
+        const requirement = typeof body?.requirement === 'string' ? body.requirement.trim() : ''
+        if (requirement === '') {
+          writeJson(res, 200, { ok: false, code: 'recommend-requirement-required', message: '需求描述（requirement）不能为空。' })
+          return
+        }
+        const channel = channelOf(deps.resolveChannels(), body?.channel)
+        if (channel === undefined) {
+          writeJson(res, 200, { ok: false, code: 'channel-not-configured', message: '没有可用的音频渠道（需要已配置 API 地址与密钥），请先在设置中添加。' })
+          return
+        }
+        const rawTopK = body?.top_k
+        const topK = typeof rawTopK === 'number' && Number.isFinite(rawTopK)
+          ? Math.max(1, Math.min(10, Math.floor(rawTopK)))
+          : 5
+        try {
+          // 推荐面向足够宽的候选池：不传 limit 用默认上限，避免默认 100 太窄。
+          const result = await listVendorVoices(channel, {
+            ...voiceListOptionsOf(body),
+            limit: 500,
+          })
+          const recommendations = await deps.recommend(requirement, result.voices, topK)
+          writeJson(res, 200, {
+            ok: true,
+            vendor: result.vendor,
+            channel: channel.name,
+            requirement,
+            candidate_count: result.voices.length,
+            top_k: topK,
+            recommendations,
+            ...(result.note === undefined ? {} : { note: result.note }),
+          })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'voice-recommend-failed', message: messageOf(error) })
         }
       },
     },

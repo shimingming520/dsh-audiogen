@@ -14,7 +14,9 @@ import { appendHistory, saveAudioFile, saveToLibrary, listLibrary } from './audi
 import {
   listVendorVoices,
   deleteVendorVoice,
+  type VendorVoiceEntry,
 } from './voice-manager.ts'
+import type { VoiceRecommendation } from './voice-recommend.ts'
 import type { AudioMode, GenerateAudioRequest, LibraryType } from './protocol.ts'
 
 export interface AgentAudioToolConfig {
@@ -27,6 +29,8 @@ export interface AgentAudioToolConfig {
   budget?: GenerationBudget
   /** 提示词增强（复用 Agent 默认模型）；enhance_prompt=true 时在生成前调用。 */
   enhance?: (prompt: string, mode: AudioMode) => Promise<string>
+  /** 音色推荐（复用 Agent 默认模型）：需求描述 + 候选池 → top-k 推荐。 */
+  recommend?: (requirement: string, candidates: VendorVoiceEntry[], topK: number) => Promise<VoiceRecommendation[]>
 }
 
 interface AgentAudioRef {
@@ -553,16 +557,16 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
     },
   }))
 
-  /** 厂商音色管理：浏览/筛选 + 删除（仅自建）。删除不可逆，必须 confirm=true。 */
+  /** 厂商音色管理：浏览/筛选 + 按需求描述推荐 + 删除（仅自建）。删除不可逆，必须 confirm=true。 */
   const managementDisposer = ctx.tools.register(defineTool({
     name: 'manage_audio_voices',
-    description: 'Manage vendor voice libraries (MiniMax / ElevenLabs). action=list: browse available TTS voices of a channel — official/shared voices plus voices designed/cloned by the account; filtering supports the official /v1/shared-voices server-side filters (search/use_case/accent/gender/age/locale/category/sort/featured/free_users_allowed/descriptive) for the ElevenLabs shared library, plus local language/keyword/source filtering everywhere; returns voice_id/name/source/description/preview_url and whether each voice is deletable. action=delete: delete one OWNED voice (custom/owned only; official/shared/system voices are read-only and refused) — irreversible, so confirm must be true (pass the exact voice_id from action=list). Use the returned voice_id with generate_audio (mode=tts, voice=<voice_id>) to speak with the selected voice.',
+    description: 'Manage vendor voice libraries (MiniMax / ElevenLabs). action=list: browse available TTS voices of a channel — official/shared voices plus voices designed/cloned by the account; filtering supports the official /v1/shared-voices server-side filters (search/use_case/accent/gender/age/locale/category/sort/featured/free_users_allowed/descriptive) for the ElevenLabs shared library, plus local language/keyword/source filtering everywhere; returns voice_id/name/source/description/preview_url and whether each voice is deletable. action=recommend: let the agent default model pick the top-k voices for a natural-language requirement (e.g. "17岁清亮甜美的少女音，适合活泼女主角，英式口音") from the same candidate pool — pass requirement (required) and optional top_k (1-10, default 5); returns ranked voices with a short reason each; voice_ids are validated against the pool (hallucinated ids are dropped). action=delete: delete one OWNED voice (custom/owned only; official/shared/system voices are read-only and refused) — irreversible, so confirm must be true (pass the exact voice_id from action=list). Use the returned voice_id with generate_audio (mode=tts, voice=<voice_id>) to speak with the selected voice.',
     parameters: {
-      action: { type: 'string', enum: ['list', 'delete'], required: true, description: 'list = browse/filter voices; delete = remove an owned voice.' },
+      action: { type: 'string', enum: ['list', 'recommend', 'delete'], required: true, description: 'list = browse/filter voices; recommend = pick voices for a requirement with the agent default model; delete = remove an owned voice.' },
       channel: { type: 'string', description: 'Channel name or id (e.g. the channel shown in settings). Defaults to the default channel; required when more than one channel is configured.' },
-      language: { type: 'string', description: 'Filter for list: language substring (ISO code like en/zh/ja, or a label like Chinese (Mandarin)).' },
-      keyword: { type: 'string', description: 'Filter for list: free text over voice name/description/accent/use_case.' },
-      source: { type: 'string', enum: ['system', 'custom', 'owned', 'shared'], description: 'Filter for list: MiniMax system/custom; ElevenLabs owned (account) / shared (community).' },
+      language: { type: 'string', description: 'Filter for list/recommend: language substring (ISO code like en/zh/ja, or a label like Chinese (Mandarin)).' },
+      keyword: { type: 'string', description: 'Filter for list/recommend: free text over voice name/description/accent/use_case.' },
+      source: { type: 'string', enum: ['system', 'custom', 'owned', 'shared'], description: 'Filter for list/recommend: MiniMax system/custom; ElevenLabs owned (account) / shared (community).' },
       search: { type: 'string', description: 'Official /v1/shared-voices filter: free-text search over the ElevenLabs shared voice library (ElevenLabs only; local fallback elsewhere).' },
       use_case: { type: 'string', description: 'Official filter: use case, e.g. characters_animation / conversational / narration / gaming (ElevenLabs shared library).' },
       accent: { type: 'string', description: 'Official filter: accent, e.g. british / american / australian.' },
@@ -574,6 +578,8 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       featured: { type: 'boolean', description: 'Official filter: featured shared voices only (true only).' },
       free_users_allowed: { type: 'boolean', description: 'Official filter: voices allowed for free users only (true only).' },
       descriptive: { type: 'boolean', description: 'Official filter: voices with descriptions only (true only).' },
+      requirement: { type: 'string', description: 'Required for recommend: the natural-language voice requirement, e.g. "低沉磁性的中年男声，适合沉稳旁白".' },
+      top_k: { type: 'integer', description: 'Optional for recommend: how many voices to return (1-10, default 5).' },
       voice_id: { type: 'string', description: 'Required for delete: the exact voice_id from action=list.' },
       confirm: { type: 'boolean', description: 'Required for delete: must be true; deletion is irreversible.' },
     },
@@ -583,11 +589,13 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
         additionalProperties: false,
         properties: {
           status: { type: 'string', required: true, enum: ['ok'] },
-          kind: { type: 'string', required: true, enum: ['list', 'delete'] },
+          kind: { type: 'string', required: true, enum: ['list', 'recommend', 'delete'] },
           vendor: { type: 'string', required: true },
           channel: { type: 'string', required: true },
           count: { type: 'integer' },
           truncated: { type: 'boolean' },
+          requirement: { type: 'string' },
+          candidate_count: { type: 'integer' },
           voices: {
             type: 'array',
             items: {
@@ -608,6 +616,27 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
               },
             },
           },
+          recommendations: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                voice_id: { type: 'string', required: true },
+                name: { type: 'string', required: true },
+                source: { type: 'string', required: true },
+                deletable: { type: 'boolean', required: true },
+                language: { type: 'string' },
+                accent: { type: 'string' },
+                gender: { type: 'string' },
+                age: { type: 'string' },
+                use_case: { type: 'string' },
+                description: { type: 'string' },
+                preview_url: { type: 'string' },
+                reason: { type: 'string', required: true },
+              },
+            },
+          },
           voice_id: { type: 'string' },
           deleted: { type: 'boolean' },
           message: { type: 'string' },
@@ -624,8 +653,8 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
         throw new AudioGenError('AI audio is disabled. Open Settings > Plugins > AI Audio and enable it.', 'plugin-disabled')
       }
       const channel = resolveVoiceManagementChannel(config, args.channel)
-      const action = args.action === 'delete' ? 'delete' : 'list'
-      if (action === 'list') {
+      const action = args.action === 'delete' ? 'delete' : args.action === 'recommend' ? 'recommend' : 'list'
+      if (action === 'list' || action === 'recommend') {
         const source = typeof args.source === 'string' && ['system', 'custom', 'owned', 'shared'].includes(args.source) ? args.source : undefined
         const pick = (value: unknown): string | undefined => typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
         const serverFilters = {
@@ -646,7 +675,29 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
           ...(typeof args.keyword === 'string' && args.keyword.trim() !== '' ? { keyword: args.keyword.trim() } : {}),
           ...(source === undefined ? {} : { source }),
           ...(Object.keys(serverFilters).length === 0 ? {} : { serverFilters }),
+          // 推荐用宽候选池（最高上限）；浏览保持默认窗口更快。
+          ...(action === 'recommend' ? { limit: 500 } : {}),
         })
+        if (action === 'recommend') {
+          const requirement = typeof args.requirement === 'string' ? args.requirement.trim() : ''
+          if (requirement === '') throw new AudioGenError('recommend requires requirement (a natural-language voice description).', 'recommend-requirement-required')
+          const rawTopK = args.top_k
+          const topK = typeof rawTopK === 'number' && Number.isFinite(rawTopK)
+            ? Math.max(1, Math.min(10, Math.floor(rawTopK)))
+            : 5
+          if (config.recommend === undefined) throw new AudioGenError('Voice recommendation is unavailable (LLM service not wired).', 'recommend-unavailable')
+          const recommendations = await config.recommend(requirement, result.voices, topK)
+          return {
+            status: 'ok' as const,
+            kind: 'recommend' as const,
+            vendor: result.vendor,
+            channel: channel.name,
+            requirement,
+            candidate_count: result.voices.length,
+            recommendations,
+            ...(result.note === undefined ? {} : { note: result.note }),
+          }
+        }
         return {
           status: 'ok' as const,
           kind: 'list' as const,

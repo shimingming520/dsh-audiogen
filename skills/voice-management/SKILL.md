@@ -1,7 +1,7 @@
 ---
 name: dsh-audiogen-voice-management
-description: 浏览/筛选/删除厂商音色库（MiniMax、ElevenLabs）并复用选定音色生成 TTS。当用户提到「音色管理 / 音色列表 / 查看有哪些音色 / 删除音色 / 筛选音色 / 用某个音色 TTS / 声音列表」时触发。与资源库（本地生成结果）无关，请勿混淆。
-whenToUse: 需要查看某个渠道（MiniMax / ElevenLabs）有哪些可用音色、按语言/关键词筛选音色、删除某个自建音色，或拿到音色 voice_id 后用它生成语音时。
+description: 浏览/筛选/删除厂商音色库（MiniMax、ElevenLabs）并按需求描述（prompt）推荐音色，复用选定音色生成 TTS。当用户提到「音色管理 / 音色列表 / 查看有哪些音色 / 删除音色 / 筛选音色 / 推荐音色 / 选个合适的音色 / 用某个音色 TTS / 声音列表」时触发。与资源库（本地生成结果）无关，请勿混淆。
+whenToUse: 需要查看某个渠道（MiniMax / ElevenLabs）有哪些可用音色、按语言/关键词筛选音色、按一段描述（如「清亮甜美的少女音」）让模型推荐音色、删除某个自建音色，或拿到音色 voice_id 后用它生成语音时。
 ---
 
 # 厂商音色管理（dsh-audiogen）
@@ -45,6 +45,19 @@ whenToUse: 需要查看某个渠道（MiniMax / ElevenLabs）有哪些可用音�
 
 这些参数只对 ElevenLabs 共享库起作用（服务端筛选），自有音色与其他渠道按同名字段本地兜底；MiniMax 无服务端筛选端点，会在返回 `note` 中说明。
 
+## 按需求描述推荐音色（action=recommend）
+
+```json
+{"action": "recommend", "channel": "ElevenLabs", "language": "en", "requirement": "17岁清亮甜美的少女音，适合活泼女主角，英式口音", "top_k": 5}
+```
+
+- `requirement`（必填）：自然语言需求描述。模型按语言/性别/年龄感/气质/用途综合打分。
+- `top_k`：推荐条数（1-10，默认 5）。
+- 候选池 = 当前渠道 + 传入的筛选条件（language/keyword/source + 共享库服务端参数），默认拉宽到上限 500 条；结果中的 `voice_id` 均校验为候选池真实成员（模型编造的 id 会被丢弃）。
+- 返回 `recommendations`：每条含 `voice_id` / `name` / `source` / `deletable` / `preview_url` 等音色字段 + `reason`（中文推荐理由）。
+- 机制：复用 Agent 默认模型（「设置 → 模型」的 agent-default-model），**不新增 API key**；模型未配置时提示先设置默认模型。
+- 推荐后再 `generate_audio(mode="tts", voice="<voice_id>")` 闭环生成。
+
 ## 删除音色（action=delete）
 
 ```json
@@ -64,5 +77,8 @@ MiniMax TTS 的 `voice` 参数需要官方 voice_id；ElevenLabs 的 `voice` 参
 ## 常见错误
 
 - `channel-choice-required`：多个渠道未指定 → 先 `manage_audio_voices(list, channel=...)` 或询问用户。
+- `recommend-requirement-required`：推荐时缺 `requirement` → 补上自然语言描述。
+- `recommend-no-candidates`：候选池为空 → 确认渠道音色库可用，或放宽筛选。
+- `recommend-parse-failed`：模型返回的推荐未命中候选池 → 重试，或用语言/关键词先缩小候选集。
 - 删除被拒（`system`/`shared` 只读）：换个 `source=custom`/`owned` 的音色。
 - 拉取失败：渠道 API 地址/密钥错误，或网关不支持音色管理端点（Stability、自定义 OpenAI 兼容渠道无此能力，会明确提示不支持）。

@@ -8,7 +8,7 @@
 export const AUDIOGEN_SETTINGS_NAMESPACE = 'dsh-audiogen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '0.4.20'
+export const PLUGIN_VERSION = '0.4.21'
 
 /** Same-origin route family (loopback-only, mirroring dsh-imagegen). */
 export const SETTINGS_API = {
@@ -42,6 +42,7 @@ export const MODEL_API = {
 export const VOICES_API = {
   list: '/api/dsh-audiogen/voices/list',
   delete: '/api/dsh-audiogen/voices/delete',
+  recommend: '/api/dsh-audiogen/voices/recommend',
 } as const
 
 /** One normalized vendor voice entry (see voice-manager). */
@@ -91,6 +92,19 @@ export interface VoicesDeleteRequest {
   channel?: string
   voice_id: string
   confirm: boolean
+}
+
+/** Prompt-based recommendation request: 需求描述 + 可选的候选池缩小条件。 */
+export interface VoicesRecommendRequest extends VoicesListRequest {
+  /** 自然语言需求描述（如「17岁清亮甜美的少女音，适合活泼女主角」）。 */
+  requirement: string
+  /** 推荐条数（1-10，默认 5）。 */
+  top_k?: number
+}
+
+/** 单条推荐：音色条目 + LLM 理由（复用 VoiceEntry 形状以便前端直接渲染/复用）。 */
+export interface VoiceRecommendation extends VoiceEntry {
+  reason: string
 }
 
 /** Loopback-only audio file reader for panel/tool-result previews. */

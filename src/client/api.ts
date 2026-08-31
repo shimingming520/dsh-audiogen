@@ -8,6 +8,7 @@ import {
   type GenerateAudioRequest, type GeneratedAudio, type HistoryEntry,
   type LibraryEntry, type LibrarySaveRequest, type LibraryUpdateRequest,
   type VoiceEntry, type VoicesListRequest, type VoicesDeleteRequest,
+  type VoicesRecommendRequest, type VoiceRecommendation,
 } from '../protocol.ts'
 
 export interface GenerateResponse {
@@ -132,5 +133,45 @@ export class AudiogenApi {
     const response = await postJson(VOICES_API.delete, request)
     const body = await response.json() as { ok?: boolean; message?: string; code?: string }
     return { ok: body.ok === true, ...(body.message === undefined ? {} : { message: body.message }), ...(body.code === undefined ? {} : { code: body.code }) }
+  }
+
+  /** 按需求描述（prompt）用 Agent 默认模型推荐音色（MiniMax / ElevenLabs）。 */
+  async voiceRecommend(request: VoicesRecommendRequest): Promise<{
+    ok: boolean
+    vendor?: string
+    channel?: string
+    requirement?: string
+    candidate_count?: number
+    top_k?: number
+    recommendations?: VoiceRecommendation[]
+    note?: string
+    code?: string
+    message?: string
+  }> {
+    const response = await postJson(VOICES_API.recommend, request)
+    const body = await response.json() as {
+      ok?: boolean
+      vendor?: string
+      channel?: string
+      requirement?: string
+      candidate_count?: number
+      top_k?: number
+      recommendations?: VoiceRecommendation[]
+      note?: string
+      code?: string
+      message?: string
+    }
+    return {
+      ok: body.ok === true,
+      ...(body.vendor === undefined ? {} : { vendor: body.vendor }),
+      ...(body.channel === undefined ? {} : { channel: body.channel }),
+      ...(body.requirement === undefined ? {} : { requirement: body.requirement }),
+      ...(body.candidate_count === undefined ? {} : { candidate_count: body.candidate_count }),
+      ...(body.top_k === undefined ? {} : { top_k: body.top_k }),
+      ...(body.recommendations === undefined ? {} : { recommendations: body.recommendations }),
+      ...(body.note === undefined ? {} : { note: body.note }),
+      ...(body.code === undefined ? {} : { code: body.code }),
+      ...(body.message === undefined ? {} : { message: body.message }),
+    }
   }
 }

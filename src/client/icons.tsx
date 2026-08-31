@@ -168,3 +168,16 @@ export function ListIcon(): JSX.Element {
     </Svg>
   )
 }
+
+export function SparkIcon(): JSX.Element {
+  return (
+    <Svg viewBox="0 0 16 16">
+      <path
+        d="M6.5 2.4l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3Z"
+        fill="currentColor"
+        stroke="none"
+      />
+      <path d="M11.6 9.2l.6 1.8 1.8.6-1.8.6-.6 1.8-.6-1.8-1.8-.6 1.8-.6.6-1.8Z" fill="currentColor" stroke="none" />
+    </Svg>
+  )
+}

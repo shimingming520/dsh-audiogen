@@ -20,8 +20,8 @@
 - **Prompt enhancement**: rewrite a rough idea into a ready-to-generate description with an LLM (pick any model from *Settings → Models*; falls back to the agent default model)
 - **History with one-click restore**: prompt, config, model set *and the original audio* come back into the panel — no regeneration, no extra cost
 - **Resource library**: auto-save generated audio (or opt in per run), organized by type — voices / music / SFX / TTS — with search, tags, rename, category moves, and full provenance (channel, model, voice id, prompt, params snapshot). Reuse a voice or music bed instead of regenerating
-- **Agent tools**: `generate_audio` and `search_audio_library`, `manage_audio_voices` (vendor voice browsing/deletion), plus bundled session skills — the Agent can generate and find audio on demand
-- **Panel voice management**: a «音色» tab in the AI 音频 panel — browse/filter vendor voices (language/keyword/source + official ElevenLabs shared-voice filters), preview, delete account-owned voices (confirmed) and backfill the chosen `voice_id` into the TTS form
+- **Agent tools**: `generate_audio` and `search_audio_library`, `manage_audio_voices` (vendor voice browsing/deletion + prompt-based voice recommendation), plus bundled session skills — the Agent can generate and find audio on demand
+- **Panel voice management**: a «音色» tab in the AI 音频 panel — browse/filter vendor voices (language/keyword/source + official ElevenLabs shared-voice filters), ask the agent default model to recommend voices for a natural-language requirement (e.g. «清亮甜美的少女音»), preview, delete account-owned voices (confirmed) and backfill the chosen `voice_id` into the TTS form
 - **Keys stay local**: API keys live in the local DSH settings document and generation is proxied by the local host; the browser and the Agent never touch plaintext credentials
 
 ## 📸 Screenshots
@@ -79,7 +79,7 @@ Restart `dsh web` after install — the sidebar will show the **AI Audio** entry
 | Tool | Purpose |
 | --- | --- |
 | `generate_audio` | Submit a TTS / music / SFX / voice-design task; waits for completion and returns same-origin audio URLs. Optional `enhance_prompt`, `save_to_library`, per-vendor params. |
-| `manage_audio_voices` | Browse/filter the vendor voice libraries (MiniMax, ElevenLabs) with language/keyword/source filters, and delete account-owned voices (official/shared/system voices are read-only and refused). Then use the returned `voice_id` with `generate_audio` (mode=tts). |
+| `manage_audio_voices` | Browse/filter the vendor voice libraries (MiniMax, ElevenLabs) with language/keyword/source filters; recommend top-k voices for a natural-language requirement (`action=recommend`, uses the agent default model, ids validated against the pool); delete account-owned voices (official/shared/system voices are read-only and refused). Then use the returned `voice_id` with `generate_audio` (mode=tts). |
 | `search_audio_library` | Search the local resource library (type / category / keyword) and reuse an existing voice, music bed or effect. |
 
 Typical session commands (skills bundled with the plugin):

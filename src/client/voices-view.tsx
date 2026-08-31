@@ -12,10 +12,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AudiogenApi } from './api.ts'
 import type { AudiogenScope } from './settings-scope.ts'
-import type { VoiceEntry } from '../protocol.ts'
+import type { VoiceEntry, VoiceRecommendation } from '../protocol.ts'
 import { tt } from './helpers.ts'
 import { AudioPlayer } from './audio-player.tsx'
-import { MicIcon, SearchIcon, TrashIcon, CheckIcon } from './icons.tsx'
+import { MicIcon, SearchIcon, TrashIcon, CheckIcon, SparkIcon } from './icons.tsx'
 import css from './voices.module.css'
 
 export interface VoicesReusePayload {
@@ -99,6 +99,32 @@ export function VoicesView(props: {
   const [note, setNote] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
+  // AI 推荐（按需求描述选音色，复用 Agent 默认模型）
+  const [requirement, setRequirement] = useState('')
+  const [topK, setTopK] = useState(5)
+  const [recommending, setRecommending] = useState(false)
+  const [recommendError, setRecommendError] = useState<string | null>(null)
+  const [recommendations, setRecommendations] = useState<VoiceRecommendation[] | null>(null)
+  const [recommendCandidateCount, setRecommendCandidateCount] = useState<number | null>(null)
+
+  /** 当前的筛选载荷（查询与 AI 推荐共用：推荐先在筛选后的候选池里选）。 */
+  const currentFilterPayload = (): Record<string, unknown> => ({
+    channel: channelId,
+    ...(language.trim() === '' ? {} : { language: language.trim() }),
+    ...(keyword.trim() === '' ? {} : { keyword: keyword.trim() }),
+    ...(source === '' ? {} : { source }),
+    ...(search.trim() === '' ? {} : { search: search.trim() }),
+    ...(useCase.trim() === '' ? {} : { use_case: useCase.trim() }),
+    ...(accent.trim() === '' ? {} : { accent: accent.trim() }),
+    ...(gender.trim() === '' ? {} : { gender: gender.trim() }),
+    ...(age.trim() === '' ? {} : { age: age.trim() }),
+    ...(locale.trim() === '' ? {} : { locale: locale.trim() }),
+    ...(category.trim() === '' ? {} : { category: category.trim() }),
+    ...(sort === '' ? {} : { sort }),
+    ...(featured ? { featured: true } : {}),
+    ...(freeUsersAllowed ? { free_users_allowed: true } : {}),
+  })
+
   const load = async (): Promise<void> => {
     const channel = channels.find(item => item.id === channelId)
     if (channel === undefined) return
@@ -107,20 +133,7 @@ export function VoicesView(props: {
     setNote(null)
     try {
       const response = await api.voiceList({
-        channel: channel.id,
-        ...(language.trim() === '' ? {} : { language: language.trim() }),
-        ...(keyword.trim() === '' ? {} : { keyword: keyword.trim() }),
-        ...(source === '' ? {} : { source }),
-        ...(search.trim() === '' ? {} : { search: search.trim() }),
-        ...(useCase.trim() === '' ? {} : { use_case: useCase.trim() }),
-        ...(accent.trim() === '' ? {} : { accent: accent.trim() }),
-        ...(gender.trim() === '' ? {} : { gender: gender.trim() }),
-        ...(age.trim() === '' ? {} : { age: age.trim() }),
-        ...(locale.trim() === '' ? {} : { locale: locale.trim() }),
-        ...(category.trim() === '' ? {} : { category: category.trim() }),
-        ...(sort === '' ? {} : { sort }),
-        ...(featured ? { featured: true } : {}),
-        ...(freeUsersAllowed ? { free_users_allowed: true } : {}),
+        ...currentFilterPayload(),
         limit: 500,
       })
       if (response.ok) {
@@ -175,6 +188,36 @@ export function VoicesView(props: {
     })
   }
 
+  const recommend = async (): Promise<void> => {
+    const text = requirement.trim()
+    if (text === '') {
+      setRecommendError('请先描述你想要的音色，例如「17岁清亮甜美的少女音，活泼女主角」。')
+      return
+    }
+    setRecommending(true)
+    setRecommendError(null)
+    setRecommendations(null)
+    setRecommendCandidateCount(null)
+    try {
+      const response = await api.voiceRecommend({
+        ...currentFilterPayload(),
+        requirement: text,
+        top_k: topK,
+      })
+      if (response.ok) {
+        setRecommendations(response.recommendations ?? [])
+        setRecommendCandidateCount(response.candidate_count ?? null)
+        setNote(response.note ?? null)
+      } else {
+        setRecommendError(response.message ?? '音色推荐失败')
+      }
+    } catch (err) {
+      setRecommendError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRecommending(false)
+    }
+  }
+
   return (
     <div className={css.view}>
       <div className={css.toolbar}>
@@ -211,6 +254,80 @@ export function VoicesView(props: {
         <button type="button" className={css.primaryBtn} onClick={() => void load()} disabled={loading}>
           <SearchIcon /> {loading ? '查询中…' : '查询音色'}
         </button>
+      </div>
+
+      <div className={css.recommend}>
+        <div className={css.recommendHead}>
+          <SparkIcon />
+          <span className={css.recommendTitle}>AI 推荐音色</span>
+          <span className={css.recommendHint}>按需求描述挑选，候选范围为当前渠道 + 上方筛选条件；使用「设置 → 模型」的默认模型</span>
+        </div>
+        <div className={css.recommendBody}>
+          <textarea
+            className={css.recommendInput}
+            value={requirement}
+            onChange={event => setRequirement(event.target.value)}
+            placeholder="描述你想要的音色，例如：17岁清亮甜美的少女音，适合活泼女主角，英式口音…"
+            rows={2}
+          />
+          <div className={css.recommendControls}>
+            <label className={css.field}>
+              <span className={css.fieldLabel}>推荐数量</span>
+              <select className={css.select} value={String(topK)} onChange={event => setTopK(Number(event.target.value))}>
+                <option value="3">3 条</option>
+                <option value="5">5 条</option>
+                <option value="8">8 条</option>
+                <option value="10">10 条</option>
+              </select>
+            </label>
+            <button type="button" className={css.primaryBtn} onClick={() => void recommend()} disabled={recommending}>
+              <SparkIcon /> {recommending ? '推荐中…' : 'AI 推荐'}
+            </button>
+          </div>
+        </div>
+        {recommending ? <div className={css.stateLine}><span className={css.stateNote}>正在让模型从候选音色中挑选…（最多约 45 秒）</span></div> : null}
+        {!recommending && recommendError !== null ? <div className={css.stateLine}><span className={css.stateNote} data-error>⚠ {recommendError}</span></div> : null}
+        {!recommending && recommendations !== null ? (
+          <div className={css.recommendResults}>
+            {recommendCandidateCount !== null ? (
+              <div className={css.stateLine}>
+                <span className={css.stateNote}>候选池 {recommendCandidateCount} 个音色</span>
+                {recommendations.length === 0 ? <span className={css.stateNote}>没有匹配的音色——请调整描述或放宽筛选条件</span> : null}
+              </div>
+            ) : null}
+            {recommendations.map((voice, index) => (
+              <div className={`${css.card} ${css.recommendCard}`} key={`${voice.source}:${voice.voice_id}`}>
+                <div className={css.cardHead}>
+                  <span className={css.rank}>{index + 1}</span>
+                  <span className={css.voiceName} title={voice.name}>{voice.name}</span>
+                  <span className={css.badge} data-source={voice.source}>
+                    {SOURCE_LABELS[voice.source]}
+                  </span>
+                </div>
+                {voice.reason !== '' ? <p className={css.reason}>{voice.reason}</p> : null}
+                <div className={css.meta}>
+                  <span className={css.voiceId} title={voice.voice_id}>ID: {voice.voice_id}</span>
+                  {voice.language === undefined ? null : <span>{voice.language}</span>}
+                  {voice.accent === undefined ? null : <span>{voice.accent}</span>}
+                  {voice.gender === undefined ? null : <span>{voice.gender}</span>}
+                  {voice.age === undefined ? null : <span>{voice.age}</span>}
+                  {voice.use_case === undefined ? null : <span>{voice.use_case}</span>}
+                </div>
+                {voice.description === undefined || voice.description === '' ? null : (
+                  <p className={css.description}>{voice.description}</p>
+                )}
+                {voice.preview_url === undefined || voice.preview_url === '' ? null : (
+                  <div className={css.preview}><AudioPlayer src={voice.preview_url} compact /></div>
+                )}
+                <div className={css.actions}>
+                  <button type="button" className={css.useBtn} onClick={() => reuse(voice)}>
+                    <MicIcon /> 用此音色生成
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <details className={css.advanced}>
