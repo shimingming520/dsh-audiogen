@@ -7,6 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   listVendorVoices,
+  listVendorVoicesWithFallback,
   deleteVendorVoice,
   languageFromMiniMaxId,
 } from '../src/voice-manager.ts'
@@ -379,4 +380,27 @@ test('不支持的渠道明确报错', async () => {
     () => listVendorVoices({ ...minimaxChannel, preset: 'stability', apiUrl: 'https://stability.example' }),
     /仅 MiniMax 与 ElevenLabs/,
   )
+})
+
+test('listVendorVoicesWithFallback：网关无音色库端点时回退为渠道模型目录', async () => {
+  installFetch([
+    { url: '/voices', status: 404, body: { error: { message: 'Invalid URL (GET /v1/voices)' } } },
+    { url: '/shared-voices', status: 404, body: { error: { message: 'Invalid URL (GET /v1/shared-voices)' } } },
+  ])
+  const gatewayChannel = {
+    ...elevenChannel,
+    name: 'ElevenLabs（网关）',
+    models: [
+      { alias: 'Rachel', id: 'Rachel' },
+      { alias: 'Adam', id: 'Adam' },
+    ],
+  }
+  const result = await listVendorVoicesWithFallback(gatewayChannel)
+  assert.equal(result.vendor, 'elevenlabs')
+  assert.equal(result.voices.length, 2)
+  assert.ok(result.voices.every(voice => voice.source === 'configured' && voice.deletable === false))
+  assert.ok(result.note !== undefined && result.note.includes('回退'))
+  // 筛选/keyword 本地仍生效（仅按名称）
+  const filtered = await listVendorVoicesWithFallback(gatewayChannel, { keyword: 'Rachel' })
+  assert.equal(filtered.voices.length, 1)
 })

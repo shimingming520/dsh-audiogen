@@ -85,8 +85,8 @@ export interface VoiceEntry {
   provider: string
   voice_id: string
   name: string
-  /** system | custom | owned | shared — determines deletability. */
-  source: 'system' | 'custom' | 'owned' | 'shared'
+  /** system | custom | owned | shared | configured — determines deletability. */
+  source: 'system' | 'custom' | 'owned' | 'shared' | 'configured'
   deletable: boolean
   language?: string
   locale?: string

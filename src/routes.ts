@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { SettingsConflictError, settingsNamespace, type SettingsDescriptor } from '@deepseek-ai/dsh-settings'
 import { generateAudio, AudioGenError, type AudioChannel } from './audio-engine.ts'
-import { listVendorVoices, deleteVendorVoice, type ListVoicesOptions, type VendorVoiceEntry } from './voice-manager.ts'
+import { listVendorVoices, listVendorVoicesWithFallback, deleteVendorVoice, type ListVoicesOptions, type VendorVoiceEntry } from './voice-manager.ts'
 import { recommendVoices, type VoiceRecommendation } from './voice-recommend.ts'
 import { appendVoiceRecommendRecord, listVoiceRecommendRecords, removeVoiceRecommendRecord } from './voice-recommend.ts'
 import type { GenerationBudget } from './audio-scheduler.ts'
@@ -452,7 +452,7 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {  const guard 
           return
         }
         try {
-          const result = await listVendorVoices(channel, voiceListOptionsOf(body))
+          const result = await listVendorVoicesWithFallback(channel, voiceListOptionsOf(body))
           writeJson(res, 200, {
             ok: true,
             vendor: result.vendor,
@@ -518,7 +518,7 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {  const guard 
           : 5
         try {
           // 推荐面向足够宽的候选池：不传 limit 用默认上限，避免默认 100 太窄。
-          const result = await listVendorVoices(channel, {
+          const result = await listVendorVoicesWithFallback(channel, {
             ...voiceListOptionsOf(body),
             limit: 500,
           })

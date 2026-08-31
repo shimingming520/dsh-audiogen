@@ -140,6 +140,8 @@ whenToUse: 用户有一批角色（小说/游戏/剧本），需要用 MiniMax �
 - `character_count=0` 或显示候选为空：检查语言/use_case 太严（use_case 传 `""` 再试），或渠道网关不支持音色库。
 - `channel-choice-required`：多渠道未指定 → 显式传 `channel`（如 "ElevenLabs"）。
 - 候选池只有 shared/system（只读）没关系：cast 只需要 voice_id，生成时照常可用。
+- 网关渠道无音色库端点时：cast 候选池会回退为该渠道配置的音色目录（`source=渠道模型`，无性别/年龄
+  元数据），此时硬过滤不适用，只能按名称/描述判断；需要完整候选池请配置官方 API 地址的渠道。
 
 ## 与推荐的区别
 

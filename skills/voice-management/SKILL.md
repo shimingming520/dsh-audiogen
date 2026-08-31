@@ -82,6 +82,9 @@ MiniMax TTS 的 `voice` 参数需要官方 voice_id；ElevenLabs 的 `voice` 参
 - `recommend-parse-failed`：模型返回的推荐未命中候选池 → 重试，或用语言/关键词先缩小候选集。
 - 删除被拒（`system`/`shared` 只读）：换个 `source=custom`/`owned` 的音色。
 - 拉取失败：渠道 API 地址/密钥错误，或网关不支持音色管理端点（Stability、自定义 OpenAI 兼容渠道无此能力，会明确提示不支持）。
+- 网关渠道（如 new-api 中转站）未映射 ElevenLabs 的 `/v1/voices`、`/v1/shared-voices`：列表与 AI 推荐会**自动回退**
+  为该渠道「配置的音色目录」（`source=渠道模型`，只有名称、无试听/语言/性别/年龄元数据），仍可推荐与生成；
+  需要完整音色库（试听、描述、性别年龄筛选）时请添加一个官方 API 地址（https://api.elevenlabs.io）的渠道。
 
 ## 角色选角（多角色分配音色）
 

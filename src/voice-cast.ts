@@ -23,7 +23,7 @@ import path from 'node:path'
 import os from 'node:os'
 import type { AudioChannel } from './audio-engine.ts'
 import { AudioGenError } from './audio-engine.ts'
-import { listVendorVoices, type VendorVoiceEntry } from './voice-manager.ts'
+import { listVendorVoicesWithFallback, type VendorVoiceEntry } from './voice-manager.ts'
 
 // ---------------------------------------------------------------- types
 
@@ -443,7 +443,7 @@ async function fetchPool(channel: AudioChannel, options: VoiceCastOptions): Prom
   if (channel.apiUrl.trim() === '') throw new AudioGenError('渠道未配置 API 地址', 'audio-api-not-configured')
   if (channel.apiKey.trim() === '') throw new AudioGenError('渠道未配置 API 密钥', 'audio-api-not-configured')
   const useCase = options.use_case !== undefined && options.use_case !== '' ? options.use_case : undefined
-  const result = await listVendorVoices(channel, {
+  const result = await listVendorVoicesWithFallback(channel, {
     limit: 500,
     ...(options.language !== undefined && options.language !== '' ? { language: options.language } : {}),
     // accent 不预筛：本地按角色分别「严格 → 放松」处理，才能保留可放松的池子。
@@ -472,12 +472,14 @@ export async function prepareVoiceCast(
   const { vendor, pool, note } = await fetchPool(channel, options)
   // MiniMax 音色没有性别/年龄/用途元数据（system voice_id 只有语言前缀），
   // 不能按元数据硬过滤；ElevenLabs 则严格按元数据排除（与 standalone 行为一致）。
-  const hasMetadata = vendor !== 'minimax'
+  // 网关渠道兜底池（source=configured）同样无元数据：一律跳过过滤。
+  const fallbackPool = pool.some(entry => entry.source === 'configured')
+  const hasMetadata = vendor !== 'minimax' && !fallbackPool
   const views: CastCharacterView[] = []
   for (const profile of profiles) {
     const gender = hasMetadata ? mapGender(profile.gender) : undefined
     const ages = hasMetadata ? mapAgeFilter(profile.age_stage) : []
-    const language = profile.language ?? options.language
+    const language = hasMetadata ? (profile.language ?? options.language) : undefined
     const useCase = hasMetadata ? (profile.use_case ?? options.use_case) : undefined
     const accent = hasMetadata ? options.accent : undefined
     const dialogueCount = profile.dialogue_count ?? 0

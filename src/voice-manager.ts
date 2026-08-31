@@ -20,8 +20,8 @@ export interface VendorVoiceEntry {
   provider: string
   voice_id: string
   name: string
-  /** system | custom | owned | shared — determines deletability. */
-  source: 'system' | 'custom' | 'owned' | 'shared'
+  /** system | custom | owned | shared | configured — determines deletability. */
+  source: 'system' | 'custom' | 'owned' | 'shared' | 'configured'
   language?: string
   locale?: string
   accent?: string
@@ -364,6 +364,38 @@ export async function listVendorVoices(
     vendor: result.vendor,
     ...applyFilter(result.voices, options),
     ...(result.note === undefined ? {} : { note: result.note }),
+  }
+}
+
+/**
+ * listVendorVoices 的网关友好版本：聚合网关（new-api 等）通常只代理生成接口、
+ * 不映射 /v1/voices 与 /v1/shared-voices，此时把「渠道配置的音色目录」
+ * （channel.models 的 alias 列表）作为候选池，保证音色浏览/推荐/选角仍可用。
+ * 返回条目的 source 为 `configured`（只读、无试听、无性别/年龄元数据）。
+ */
+export async function listVendorVoicesWithFallback(
+  channel: AudioChannel,
+  options: ListVoicesOptions = {},
+): Promise<ListVoicesResult> {
+  try {
+    return await listVendorVoices(channel, options)
+  } catch (error) {
+    const entries: VendorVoiceEntry[] = (channel.models ?? [])
+      .filter(model => model.alias.trim() !== '')
+      .map(model => ({
+        provider: channel.preset || 'configured',
+        voice_id: model.alias,
+        name: model.alias,
+        source: 'configured' as const,
+        deletable: false,
+      }))
+    if (entries.length === 0) throw error
+    const reason = error instanceof Error ? error.message : String(error)
+    return {
+      vendor: channel.preset || 'custom',
+      ...applyFilter(entries, options),
+      note: `音色库接口不可用（${reason.slice(0, 160)}）。已回退为渠道配置的音色目录（${entries.length} 个）：只能按名称选择，无试听与语言/性别/年龄元数据；配一个官方 API 地址（如 https://api.elevenlabs.io）的渠道可获得完整音色库`,
+    }
   }
 }
 

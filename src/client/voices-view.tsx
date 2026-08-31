@@ -29,6 +29,7 @@ const SOURCE_LABELS: Record<VoiceEntry['source'], string> = {
   custom: '自建设计',
   owned: '账户自有',
   shared: '社区共享',
+  configured: '渠道模型',
 }
 
 /** 语言下拉：ISO 639-1 值；后端按两套厂商词汇匹配（ElevenLabs ISO / MiniMax 前缀）。 */
