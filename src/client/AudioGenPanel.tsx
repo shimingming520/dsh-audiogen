@@ -7,12 +7,13 @@ import { useRef, useState } from 'react'
 import type { AudiogenApi } from './api.ts'
 import type { AudiogenScope } from './settings-scope.ts'
 import { tt } from './helpers.ts'
-import { GridIcon, ListIcon } from './icons.tsx'
+import { GridIcon, ListIcon, MicIcon } from './icons.tsx'
 import { StudioView, type StudioReuse } from './studio-view.tsx'
 import { LibraryView } from './library-view.tsx'
+import { VoicesView } from './voices-view.tsx'
 import css from './audio-panel.module.css'
 
-type Tab = 'studio' | 'library'
+type Tab = 'studio' | 'library' | 'voices'
 
 export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope }) {
   const { api, scope } = props
@@ -26,6 +27,11 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
     setToast(text)
     if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current)
     toastTimer.current = window.setTimeout(() => setToast(null), 2400)
+  }
+
+  const applyReuseVoice = (payload: { mode: 'tts'; voiceId: string; model?: string }): void => {
+    setReuse({ nonce: Date.now(), mode: 'tts', voiceId: payload.voiceId, ...(payload.model === undefined ? {} : { model: payload.model }) })
+    setTab('studio')
   }
 
   return (
@@ -53,6 +59,16 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
           >
             <ListIcon /> {tt('tab.library')}
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === 'voices'}
+            className={css.tab}
+            data-active={tab === 'voices' ? 'true' : 'false'}
+            onClick={() => setTab('voices')}
+          >
+            <MicIcon /> {tt('tab.voices')}
+          </button>
         </div>
       </header>
 
@@ -64,7 +80,7 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
           onLibraryChanged={() => setLibraryRev(revision => revision + 1)}
           showToast={showToast}
         />
-      ) : (
+      ) : tab === 'library' ? (
         <LibraryView
           api={api}
           revision={libraryRev}
@@ -74,9 +90,17 @@ export function AudioGenPanel(props: { api: AudiogenApi; scope: AudiogenScope })
             setTab('studio')
           }}
         />
+      ) : (
+        <VoicesView
+          api={api}
+          scope={scope}
+          showToast={showToast}
+          onReuseVoice={applyReuseVoice}
+        />
       )}
 
       {toast !== null ? <div className={css.toast} role="status">{toast}</div> : null}
     </div>
   )
 }
+

@@ -8,7 +8,7 @@
 export const AUDIOGEN_SETTINGS_NAMESPACE = 'dsh-audiogen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '0.4.14'
+export const PLUGIN_VERSION = '0.4.17'
 
 /** Same-origin route family (loopback-only, mirroring dsh-imagegen). */
 export const SETTINGS_API = {
@@ -37,6 +37,59 @@ export const LLM_MODELS_API = '/api/dsh-audiogen/llm/models' as const
 export const MODEL_API = {
   discover: '/api/dsh-audiogen/models/discover',
 } as const
+
+/** Vendor voice management (browse/filter + delete) endpoints. */
+export const VOICES_API = {
+  list: '/api/dsh-audiogen/voices/list',
+  delete: '/api/dsh-audiogen/voices/delete',
+} as const
+
+/** One normalized vendor voice entry (see voice-manager). */
+export interface VoiceEntry {
+  provider: string
+  voice_id: string
+  name: string
+  /** system | custom | owned | shared — determines deletability. */
+  source: 'system' | 'custom' | 'owned' | 'shared'
+  deletable: boolean
+  language?: string
+  locale?: string
+  accent?: string
+  gender?: string
+  age?: string
+  use_case?: string
+  category?: string
+  description?: string
+  preview_url?: string
+}
+
+/** Browsing request for the panel/agent voice list. */
+export interface VoicesListRequest {
+  /** Channel name or id; defaults to the default channel. */
+  channel?: string
+  language?: string
+  keyword?: string
+  source?: string
+  /** Official /v1/shared-voices server-side filters (ElevenLabs only). */
+  search?: string
+  use_case?: string
+  accent?: string
+  gender?: string
+  age?: string
+  locale?: string
+  category?: string
+  sort?: string
+  featured?: boolean
+  free_users_allowed?: boolean
+  descriptive?: boolean
+}
+
+/** Delete request (irreversible; confirm must be true). */
+export interface VoicesDeleteRequest {
+  channel?: string
+  voice_id: string
+  confirm: boolean
+}
 
 /** Loopback-only audio file reader for panel/tool-result previews. */
 export const AUDIO_API = {

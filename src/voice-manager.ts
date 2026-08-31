@@ -60,7 +60,8 @@ export interface SharedVoiceFilters {
   age?: string
   locale?: string
   category?: string
-  sort?: 'most_used' | 'random' | 'oldest' | 'newest'
+  /** Validated at runtime against most_used/random/oldest/newest. */
+  sort?: string
   /** Only true is sent (false = no filter, matches "not filtered"). */
   featured?: boolean
   free_users_allowed?: boolean

@@ -4,9 +4,10 @@
  */
 
 import {
-  ENHANCE_API, GENERATE_API, HISTORY_API, LIBRARY_API, TASK_API,
+  ENHANCE_API, GENERATE_API, HISTORY_API, LIBRARY_API, TASK_API, VOICES_API,
   type GenerateAudioRequest, type GeneratedAudio, type HistoryEntry,
   type LibraryEntry, type LibrarySaveRequest, type LibraryUpdateRequest,
+  type VoiceEntry, type VoicesListRequest, type VoicesDeleteRequest,
 } from '../protocol.ts'
 
 export interface GenerateResponse {
@@ -90,5 +91,46 @@ export class AudiogenApi {
     const response = await postJson(LIBRARY_API.remove, { ids })
     const body = await response.json() as { ok?: boolean }
     return { ok: body.ok === true }
+  }
+
+  /** 厂商音色浏览/筛选（MiniMax / ElevenLabs）。 */
+  async voiceList(request: VoicesListRequest): Promise<{
+    ok: boolean
+    vendor?: string
+    channel?: string
+    voices?: VoiceEntry[]
+    truncated?: boolean
+    note?: string
+    code?: string
+    message?: string
+  }> {
+    const response = await postJson(VOICES_API.list, request)
+    const body = await response.json() as {
+      ok?: boolean
+      vendor?: string
+      channel?: string
+      voices?: VoiceEntry[]
+      truncated?: boolean
+      note?: string
+      code?: string
+      message?: string
+    }
+    return {
+      ok: body.ok === true,
+      ...(body.vendor === undefined ? {} : { vendor: body.vendor }),
+      ...(body.channel === undefined ? {} : { channel: body.channel }),
+      ...(body.voices === undefined ? {} : { voices: body.voices }),
+      ...(body.truncated === undefined ? {} : { truncated: body.truncated }),
+      ...(body.note === undefined ? {} : { note: body.note }),
+      ...(body.code === undefined ? {} : { code: body.code }),
+      ...(body.message === undefined ? {} : { message: body.message }),
+    }
+  }
+
+  /** 删除厂商音色（不可逆；confirm=true 必须）。 */
+  async voiceDelete(request: VoicesDeleteRequest): Promise<{ ok: boolean; message?: string; code?: string }> {
+    const response = await postJson(VOICES_API.delete, request)
+    const body = await response.json() as { ok?: boolean; message?: string; code?: string }
+    return { ok: body.ok === true, ...(body.message === undefined ? {} : { message: body.message }), ...(body.code === undefined ? {} : { code: body.code }) }
   }
 }

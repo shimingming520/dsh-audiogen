@@ -11,12 +11,13 @@ import { randomUUID } from 'node:crypto'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { SettingsConflictError, settingsNamespace, type SettingsDescriptor } from '@deepseek-ai/dsh-settings'
 import { generateAudio, AudioGenError, type AudioChannel } from './audio-engine.ts'
+import { listVendorVoices, deleteVendorVoice } from './voice-manager.ts'
 import type { GenerationBudget } from './audio-scheduler.ts'
 import { discoverAudioModels } from './audio-models.ts'
 import { AUDIO_PRESETS } from './audio-presets.ts'
 import { appendHistory, clearHistory, listHistory, readAudioFile, removeHistory, saveAudioFile, listLibrary, saveToLibrary, updateLibraryEntry, removeLibraryEntries, readLibraryFile } from './audio-store.ts'
 import {
-  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, ENHANCE_API, GENERATE_API, HISTORY_API, LIBRARY_API, LLM_MODELS_API, MODEL_API, PRESETS_API, SETTINGS_API, TASK_API,
+  AUDIO_API, AUDIOGEN_SETTINGS_NAMESPACE, ENHANCE_API, GENERATE_API, HISTORY_API, LIBRARY_API, LLM_MODELS_API, MODEL_API, PRESETS_API, SETTINGS_API, TASK_API, VOICES_API,
   LIBRARY_TYPES,
   type GenerateAudioRequest, type GeneratedAudio, type HistoryEntryInput, type LibraryAudioInput, type LibraryProvenance, type LibraryType, type LlmModelOption,
 } from './protocol.ts'
@@ -315,6 +316,18 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
     return true
   }
 
+  /** Resolve the target channel by name/id, falling back to the default one. */
+  const channelOf = (view: ChannelsView, wanted: unknown): AudioChannel | undefined => {
+    const usable = view.channels.filter(channel => channel.apiUrl.trim() !== '' && channel.apiKey.trim() !== '')
+    if (usable.length === 0) return undefined
+    const name = typeof wanted === 'string' ? wanted.trim() : ''
+    if (name !== '') {
+      const direct = usable.find(channel => channel.name === name || channel.id === name)
+      if (direct !== undefined) return direct
+    }
+    return usable.find(channel => channel.id === view.defaultChannelId) ?? usable[0]
+  }
+
   const audioFileFrom = (rawUrl: string | undefined, basePath: string): string | undefined => {
     if (rawUrl === undefined) return undefined
     let pathname: string
@@ -376,6 +389,84 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
           writeJson(res, 200, { ok: true, ...await discoverAudioModels(channel) })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'model-discovery-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // ------------------------------------------------- vendor voice browse
+    {
+      kind: 'exact',
+      path: VOICES_API.list,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req) as Record<string, unknown> | undefined
+        const channel = channelOf(deps.resolveChannels(), body?.channel)
+        if (channel === undefined) {
+          writeJson(res, 200, { ok: false, code: 'channel-not-configured', message: '没有可用的音频渠道（需要已配置 API 地址与密钥），请先在设置中添加。' })
+          return
+        }
+        const str = (key: string): string | undefined => {
+          const value = body?.[key]
+          return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+        }
+        const filters = {
+          ...(str('search') === undefined ? {} : { search: str('search')! }),
+          ...(str('use_case') === undefined ? {} : { use_case: str('use_case')! }),
+          ...(str('accent') === undefined ? {} : { accent: str('accent')! }),
+          ...(str('gender') === undefined ? {} : { gender: str('gender')! }),
+          ...(str('age') === undefined ? {} : { age: str('age')! }),
+          ...(str('locale') === undefined ? {} : { locale: str('locale')! }),
+          ...(str('category') === undefined ? {} : { category: str('category')! }),
+          ...(str('sort') === undefined ? {} : { sort: str('sort')! }),
+          ...(body?.featured === true ? { featured: true } : {}),
+          ...(body?.free_users_allowed === true ? { free_users_allowed: true } : {}),
+          ...(body?.descriptive === true ? { descriptive: true } : {}),
+        }
+        try {
+          const result = await listVendorVoices(channel, {
+            ...(str('language') === undefined ? {} : { language: str('language')! }),
+            ...(str('keyword') === undefined ? {} : { keyword: str('keyword')! }),
+            ...(str('source') === undefined ? {} : { source: str('source')! }),
+            ...(Object.keys(filters).length === 0 ? {} : { serverFilters: filters }),
+          })
+          writeJson(res, 200, {
+            ok: true,
+            vendor: result.vendor,
+            channel: channel.name,
+            voices: result.voices,
+            truncated: result.truncated,
+            ...(result.note === undefined ? {} : { note: result.note }),
+          })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'voice-list-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // ------------------------------------------------- vendor voice delete
+    {
+      kind: 'exact',
+      path: VOICES_API.delete,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req) as Record<string, unknown> | undefined
+        const channel = channelOf(deps.resolveChannels(), body?.channel)
+        if (channel === undefined) {
+          writeJson(res, 200, { ok: false, code: 'channel-not-configured', message: '没有可用的音频渠道（需要已配置 API 地址与密钥），请先在设置中添加。' })
+          return
+        }
+        const voiceId = typeof body?.voice_id === 'string' ? body.voice_id.trim() : ''
+        if (voiceId === '') {
+          writeJson(res, 200, { ok: false, code: 'voice-id-required', message: 'voice_id 不能为空。' })
+          return
+        }
+        if (body?.confirm !== true) {
+          writeJson(res, 200, { ok: false, code: 'voice-delete-requires-confirm', message: '删除不可逆：请确认勾选后再执行。' })
+          return
+        }
+        try {
+          const result = await deleteVendorVoice(channel, voiceId)
+          writeJson(res, 200, { ok: true, ...result })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'voice-delete-failed', message: messageOf(error) })
         }
       },
     },

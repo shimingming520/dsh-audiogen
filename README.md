@@ -21,6 +21,7 @@
 - **History with one-click restore**: prompt, config, model set *and the original audio* come back into the panel — no regeneration, no extra cost
 - **Resource library**: auto-save generated audio (or opt in per run), organized by type — voices / music / SFX / TTS — with search, tags, rename, category moves, and full provenance (channel, model, voice id, prompt, params snapshot). Reuse a voice or music bed instead of regenerating
 - **Agent tools**: `generate_audio` and `search_audio_library`, `manage_audio_voices` (vendor voice browsing/deletion), plus bundled session skills — the Agent can generate and find audio on demand
+- **Panel voice management**: a «音色» tab in the AI 音频 panel — browse/filter vendor voices (language/keyword/source + official ElevenLabs shared-voice filters), preview, delete account-owned voices (confirmed) and backfill the chosen `voice_id` into the TTS form
 - **Keys stay local**: API keys live in the local DSH settings document and generation is proxied by the local host; the browser and the Agent never touch plaintext credentials
 
 ## 📸 Screenshots
