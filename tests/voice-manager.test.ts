@@ -290,6 +290,67 @@ test('list MiniMax：服务端筛选参数以 note 说明（本地兜底过滤�
   assert.ok(result.note?.includes('use_case'))
 })
 
+test('list 排序：可删音色（custom/owned）优先于只读音色', async () => {
+  installFetch([
+    {
+      url: '/v1/get_voice',
+      method: 'POST',
+      body: {
+        system_voice: [
+          { voice_id: 'male-qn-qingse', voice_name: '青涩青年' },
+          { voice_id: 'female-shaonv', voice_name: '少女' },
+        ],
+        voice_cloning: [{ voice_id: 'voice_muyao', voice_name: '慕瑶定制' }],
+        base_resp: { status_code: 0 },
+      },
+    },
+  ])
+  const result = await listVendorVoices(minimaxChannel)
+  assert.equal(result.voices[0]!.voice_id, 'voice_muyao')
+  assert.equal(result.voices[0]!.deletable, true)
+  assert.equal(result.voices[1]!.deletable, false)
+})
+
+test('list limit 生效且 truncated 标记', async () => {
+  installFetch([
+    {
+      url: '/v1/get_voice',
+      method: 'POST',
+      body: {
+        system_voice: [
+          { voice_id: 's1', voice_name: '一' },
+          { voice_id: 's2', voice_name: '二' },
+          { voice_id: 's3', voice_name: '三' },
+        ],
+        voice_cloning: [],
+        base_resp: { status_code: 0 },
+      },
+    },
+  ])
+  const result = await listVendorVoices(minimaxChannel, { limit: 2 })
+  assert.equal(result.voices.length, 2)
+  assert.equal(result.truncated, true)
+})
+
+test('ElevenLabs 网关 404：错误信息带官方地址引导', async () => {
+  installFetch([
+    {
+      url: '/voices',
+      status: 404,
+      body: { error: { message: 'Invalid URL (GET /v1/voices)' } },
+    },
+    {
+      url: '/shared-voices',
+      status: 404,
+      body: { error: { message: 'Invalid URL (GET /v1/shared-voices)' } },
+    },
+  ])
+  await assert.rejects(
+    async () => { await listVendorVoices(elevenChannel) },
+    /api\.elevenlabs\.io/,
+  )
+})
+
 test('不支持的渠道明确报错', async () => {
   await assert.rejects(
     () => listVendorVoices({ ...minimaxChannel, preset: 'stability', apiUrl: 'https://stability.example' }),

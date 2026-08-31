@@ -272,7 +272,10 @@ async function listElevenLabs(channel: AudioChannel, options: ListVoicesOptions)
   }
 
   if (entries.length === 0 && failures.length > 0) {
-    throw new Error(`ElevenLabs 音色列表拉取失败：${failures.join('；').slice(0, 300)}`)
+    const gatewayHint = gatewayVoiceLibraryHint(failures)
+    throw new Error(
+      `ElevenLabs 音色列表拉取失败：${failures.join('；').slice(0, 300)}${gatewayHint}`,
+    )
   }
   // Owned voices come first and shadow shared ones with the same id.
   const seen = new Set<string>()
@@ -282,12 +285,23 @@ async function listElevenLabs(channel: AudioChannel, options: ListVoicesOptions)
     seen.add(entry.voice_id)
     deduped.push(entry)
   }
+  const note = failures.length === 0 ? undefined : `部分端点失败（已忽略）：${failures.join('；').slice(0, 300)}${gatewayVoiceLibraryHint(failures)}`
   return {
     vendor: 'elevenlabs',
     voices: deduped,
     truncated: false,
-    ...(failures.length === 0 ? {} : { note: `部分端点失败（已忽略）：${failures.join('；').slice(0, 300)}` }),
+    ...(note === undefined ? {} : { note }),
   }
+}
+
+/**
+ * Gateway (new-api 类) 通常不映射 ElevenLabs 音色库端点，其响应是
+ * 404/Invalid URL。把这种失败翻译成可操作的建议，而不是一份原始 JSON。
+ */
+function gatewayVoiceLibraryHint(failures: string[]): string {
+  const raw = failures.join(' ').toLowerCase()
+  if (!raw.includes('404') && !raw.includes('invalid url') && !raw.includes('not found')) return ''
+  return '。该渠道网关未提供 ElevenLabs 音色库端点（/v1/voices、/v1/shared-voices）：生成可用，但浏览/删除音色需要配置官方 API 地址 https://api.elevenlabs.io 的渠道'
 }
 
 // ------------------------------------------------------ public surface
@@ -387,7 +401,7 @@ function cap(options: ListVoicesOptions): number {
   const limit = typeof options.limit === 'number' && Number.isFinite(options.limit)
     ? Math.floor(options.limit)
     : 100
-  return Math.max(1, Math.min(200, limit))
+  return Math.max(1, Math.min(500, limit))
 }
 
 /** Which official shared-voice filters are set (for the MiniMax "not supported" note). */
@@ -438,5 +452,8 @@ function applyFilter(
     }
     return true
   })
+  // Deletable (account-owned/custom) voices first so narrow default windows
+  // show the manageable ones; stable sort keeps provider order inside groups.
+  matched.sort((a, b) => (a.deletable === b.deletable ? 0 : a.deletable ? -1 : 1))
   return { voices: matched.slice(0, count), truncated: matched.length > count }
 }

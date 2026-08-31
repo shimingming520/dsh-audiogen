@@ -426,6 +426,7 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
             ...(str('language') === undefined ? {} : { language: str('language')! }),
             ...(str('keyword') === undefined ? {} : { keyword: str('keyword')! }),
             ...(str('source') === undefined ? {} : { source: str('source')! }),
+            ...(typeof body?.limit === 'number' && Number.isFinite(body.limit) ? { limit: Math.floor(body.limit) } : {}),
             ...(Object.keys(filters).length === 0 ? {} : { serverFilters: filters }),
           })
           writeJson(res, 200, {

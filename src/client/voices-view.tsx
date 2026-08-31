@@ -76,6 +76,7 @@ export function VoicesView(props: {
   const [freeUsersAllowed, setFreeUsersAllowed] = useState(false)
 
   const [voices, setVoices] = useState<VoiceEntry[]>([])
+  const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
@@ -103,9 +104,11 @@ export function VoicesView(props: {
         ...(sort === '' ? {} : { sort }),
         ...(featured ? { featured: true } : {}),
         ...(freeUsersAllowed ? { free_users_allowed: true } : {}),
+        limit: 500,
       })
       if (response.ok) {
         setVoices(response.voices ?? [])
+        setTruncated(response.truncated === true)
         setNote(response.note ?? null)
       } else {
         setVoices([])
@@ -218,6 +221,7 @@ export function VoicesView(props: {
         {loading ? <span className={css.stateNote}>正在拉取音色列表…</span> : null}
         {!loading && error !== null ? <span className={css.stateNote} data-error>⚠ {error}</span> : null}
         {!loading && note !== null ? <span className={css.stateNote}>{note}</span> : null}
+        {!loading && truncated ? <span className={css.stateNote}>已截断：仅显示前 {voices.length} 个，可用筛选条件缩小范围</span> : null}
         {!loading && error === null ? <span className={css.count}>{voices.length} 个音色</span> : null}
       </div>
 

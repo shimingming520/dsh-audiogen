@@ -8,7 +8,7 @@
 export const AUDIOGEN_SETTINGS_NAMESPACE = 'dsh-audiogen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '0.4.18'
+export const PLUGIN_VERSION = '0.4.19'
 
 /** Same-origin route family (loopback-only, mirroring dsh-imagegen). */
 export const SETTINGS_API = {
@@ -70,6 +70,8 @@ export interface VoicesListRequest {
   language?: string
   keyword?: string
   source?: string
+  /** Max returned entries (default 100, hard cap 500). */
+  limit?: number
   /** Official /v1/shared-voices server-side filters (ElevenLabs only). */
   search?: string
   use_case?: string
