@@ -461,14 +461,34 @@ async function elevenLabsGatewayCompat(
   }
 
   // sfx / tts → POST /audio/speech(OpenAI 兼容形态;网关把 model=eleven_text_to_sound_v2 映射到音效生成)。
+  // 音效必须传 OpenAI 标准的 `input`(实测 ai.farmmx.com 类 new-api 网关:input+duration_seconds
+  // 会走 ElevenLabs 音效生成;若传 ElevenLabs 官方字段 `text`,网关会把它当 TTS 文本朗读出来)。
   const endpoint = speechGatewayEndpoint(base)
   const isSfx = request.mode === 'sfx'
   const model = (request.upstream ?? request.model)
     || (isSfx ? 'eleven_text_to_sound_v2' : 'eleven_multilingual_v2')
+  // 网关(new-api 类中转)对 ElevenLabs TTS 强制校验 voice/voice_id,缺失直接 400;
+  // 在发送前拦截,给出可操作的提示,而不是把网关 400 原样抛给用户。
+  if (!isSfx) {
+    const voice = request.voice?.trim() ?? ''
+    if (voice === '') {
+      const voiceEntries = (channel.models ?? []).filter(entry => {
+        const candidate = entry as { alias: string; id: string; category?: string }
+        return candidate.category === 'tts' && candidate.id.trim() !== '' && candidate.id !== candidate.alias
+      })
+      const suggestions = voiceEntries.map(entry => `${entry.alias}（${entry.id}）`)
+      throw new AudioGenError(
+        `ElevenLabs 网关渠道的 TTS 必须携带音色 voice_id（网关强制校验，缺失会返回 400 voice or voice_id is required）：请在「音色」字段填入官方音色 ID${
+          suggestions.length === 0 ? '' : `，可选用以下音色：${suggestions.slice(0, 4).join('、')}`
+        }。`,
+        'voice-required',
+      )
+    }
+  }
   const body: Record<string, unknown> = isSfx
     ? {
         model,
-        text: request.prompt,
+        input: request.prompt,
         ...(request.duration !== undefined && Number.isFinite(request.duration)
           ? { duration_seconds: Math.min(30, Math.max(0.5, request.duration)) }
           : {}),
@@ -480,7 +500,7 @@ async function elevenLabsGatewayCompat(
     : {
         model,
         input: request.prompt,
-        ...(request.voice !== undefined && request.voice.trim() !== '' ? { voice: request.voice.trim() } : {}),
+        voice: request.voice!.trim(),
         response_format: request.format ?? 'mp3',
         ...(request.speed !== undefined ? { speed: request.speed } : {}),
       }

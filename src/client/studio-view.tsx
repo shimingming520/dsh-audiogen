@@ -723,16 +723,12 @@ export function StudioView(props: {
   /** 按字段规格渲染一个表单控件（渠道/模式感知：字段集由 globalSpecs 决定）。 */
   const renderField = (spec: FieldSpec): React.JSX.Element => {
     const common = { className: css.input, disabled: false }
-    /** 字段说明：显示为控件下方的小字，不再只挂在 title 悬浮提示上。 */
-    const hintOf = (item: FieldSpec): React.JSX.Element | null =>
-      item.hint === undefined || item.hint.trim() === '' ? null : <small className={css.fieldHint}>{item.hint}</small>
     switch (spec.key) {
       case 'voice':
         return (
           <label className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
             <input className={css.input} value={voice} onChange={event => setVoice(event.target.value)} placeholder={currentPreset === 'minimax' ? 'male-qn-qingse / female-shaonv' : 'alloy / 自定义音色'} />
-            {hintOf(spec)}
           </label>
         )
       case 'speed':
@@ -740,7 +736,6 @@ export function StudioView(props: {
           <label className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
             <input className={css.input} type="number" step={spec.step ?? 0.1} min={spec.min} max={spec.max} value={speed} onChange={event => setSpeed(event.target.value)} placeholder={spec.placeholder} />
-            {hintOf(spec)}
           </label>
         )
       case 'duration':
@@ -748,7 +743,6 @@ export function StudioView(props: {
           <label className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
             <input className={css.input} type="number" step={spec.step ?? 1} min={spec.min} max={spec.max} value={duration} onChange={event => setDuration(event.target.value)} placeholder={spec.placeholder} />
-            {hintOf(spec)}
           </label>
         )
       case 'format':
@@ -758,7 +752,6 @@ export function StudioView(props: {
             <select className={css.input} value={format} onChange={event => setFormat(event.target.value)}>
               {(spec.options ?? ['mp3', 'wav', 'pcm']).map(option => <option key={option} value={option}>{option}</option>)}
             </select>
-            {hintOf(spec)}
           </label>
         )
       case 'lyrics':
@@ -772,18 +765,14 @@ export function StudioView(props: {
               onChange={event => setLyrics(event.target.value)}
               placeholder={instrumental ? '纯音乐模式无需填写歌词' : '第一段歌词…\n\n第二段歌词…'}
             />
-            {hintOf(spec)}
           </label>
         )
       case 'instrumental':
         return (
-          <div key={spec.key} className={css.fieldCheck}>
-            <label className={css.checkbox} title={spec.hint}>
-              <input type="checkbox" checked={instrumental} onChange={event => setInstrumental(event.target.checked)} />
-              <span>{spec.label}</span>
-            </label>
-            {hintOf(spec)}
-          </div>
+          <label className={css.checkbox} key={spec.key} title={spec.hint}>
+            <input type="checkbox" checked={instrumental} onChange={event => setInstrumental(event.target.checked)} />
+            <span>{spec.label}（是：{currentPreset === 'elevenlabs' ? 'force_instrumental' : 'is_instrumental'}）</span>
+          </label>
         )
       case 'sampleRate':
         return (
@@ -793,7 +782,6 @@ export function StudioView(props: {
               <option value="">默认（44100）</option>
               {(spec.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}
             </select>
-            {hintOf(spec)}
           </label>
         )
       case 'bitrate':
@@ -804,7 +792,6 @@ export function StudioView(props: {
               <option value="">默认（256000）</option>
               {(spec.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}
             </select>
-            {hintOf(spec)}
           </label>
         )
       case 'audioChannel':
@@ -816,7 +803,6 @@ export function StudioView(props: {
               <option value="1">1</option>
               <option value="2">2</option>
             </select>
-            {hintOf(spec)}
           </label>
         )
       case 'emotion':
@@ -824,7 +810,6 @@ export function StudioView(props: {
           <label className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
             <input className={css.input} value={emotion} onChange={event => setEmotion(event.target.value)} placeholder={spec.placeholder} />
-            {hintOf(spec)}
           </label>
         )
       case 'vol':
@@ -832,7 +817,6 @@ export function StudioView(props: {
           <label className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
             <input className={css.input} type="number" min={spec.min} max={spec.max} step={spec.step ?? 0.5} value={vol} onChange={event => setVol(event.target.value)} placeholder={spec.placeholder} />
-            {hintOf(spec)}
           </label>
         )
       case 'pitch':
@@ -840,7 +824,6 @@ export function StudioView(props: {
           <label className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
             <input className={css.input} type="number" min={spec.min} max={spec.max} value={pitch} onChange={event => setPitch(event.target.value)} placeholder={spec.placeholder} />
-            {hintOf(spec)}
           </label>
         )
       case 'toneText':
@@ -848,35 +831,27 @@ export function StudioView(props: {
           <label className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
             <textarea className={css.textarea} value={toneText} onChange={event => setToneText(event.target.value)} placeholder={spec.placeholder} />
-            {hintOf(spec)}
           </label>
         )
       case 'subtitle':
         return (
-          <div key={spec.key} className={css.fieldCheck}>
-            <label className={css.checkbox} title={spec.hint}>
-              <input type="checkbox" checked={subtitle} onChange={event => setSubtitle(event.target.checked)} />
-              <span>{spec.label}</span>
-            </label>
-            {hintOf(spec)}
-          </div>
+          <label className={css.checkbox} key={spec.key} title={spec.hint}>
+            <input type="checkbox" checked={subtitle} onChange={event => setSubtitle(event.target.checked)} />
+            <span>{spec.label}</span>
+          </label>
         )
       case 'loop':
         return (
-          <div key={spec.key} className={css.fieldCheck}>
-            <label className={css.checkbox} title={spec.hint}>
-              <input type="checkbox" checked={loop} onChange={event => setLoop(event.target.checked)} />
-              <span>{spec.label}</span>
-            </label>
-            {hintOf(spec)}
-          </div>
+          <label className={css.checkbox} key={spec.key} title={spec.hint}>
+            <input type="checkbox" checked={loop} onChange={event => setLoop(event.target.checked)} />
+            <span>{spec.label}</span>
+          </label>
         )
       case 'promptInfluence':
         return (
           <label className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
             <input className={css.input} type="number" step={spec.step ?? 0.1} min={spec.min} max={spec.max} value={promptInfluence} onChange={event => setPromptInfluence(event.target.value)} placeholder={spec.placeholder} />
-            {hintOf(spec)}
           </label>
         )
       case 'seed':
@@ -889,7 +864,6 @@ export function StudioView(props: {
           <label className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
             <input {...common} type="number" step={spec.step ?? 1} min={spec.min} max={spec.max} value={String(value)} placeholder={spec.placeholder} onChange={event => setter(event.target.value)} />
-            {hintOf(spec)}
           </label>
         )
       }
@@ -1069,7 +1043,7 @@ export function StudioView(props: {
                 ))}
               </select>
             </label>
-            <p className={css.hint}>MiniMax 音色设计；ElevenLabs 音色设计（试听文本 100-1000 字符，过短将自动生成）</p>
+            <p className={css.hint}>MiniMax：/v1/voice_design；ElevenLabs：/v1/text-to-voice/design（试听文本 100-1000 字符，过短将自动生成）</p>
             <label className={css.label}>
               <span>试听文本</span>
               <input className={css.input} value={previewText} onChange={event => setPreviewText(event.target.value)} placeholder="你好，这是新设计的音色试听。" />

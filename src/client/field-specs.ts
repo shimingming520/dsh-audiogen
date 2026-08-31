@@ -91,25 +91,25 @@ export function presetSupports(preset: string, key: FieldKey, mode: AudioMode): 
 }
 
 const SPECS: Record<FieldKey, Omit<FieldSpec, 'key' | 'presets'>> = {
-  duration: { label: '时长（秒）', type: 'number', min: 1, max: 200, placeholder: '30', hint: 'MiniMax 音乐最长 190 秒；ElevenLabs 音乐 3-600 秒（自动换算）；Stability 音频按模型 190 或 380 秒' },
-  format: { label: '输出格式', type: 'select', options: ['mp3', 'wav', 'pcm', 'flac', 'ogg'], hint: '可选格式：MiniMax 为 mp3 / wav / pcm；ElevenLabs 与 Stability 为 mp3 / wav' },
-  lyrics: { label: '歌词（纯音乐模式可留空；多段用空行分隔）', type: 'text', placeholder: '第一段歌词…\n\n第二段歌词…', hint: '歌词与提示词分开；勾选纯音乐后无需填写，适用于 MiniMax 与 ElevenLabs 音乐' },
-  instrumental: { label: '纯音乐（无歌词/人声）', type: 'checkbox', hint: '勾选后无需填写歌词即可生成；仅 MiniMax 与 ElevenLabs 音乐支持' },
-  sampleRate: { label: '采样率', type: 'select', options: ['16000', '24000', '32000', '44100'], placeholder: '默认（44100）', hint: 'MiniMax 可选 16000 / 24000 / 32000 / 44100' },
-  bitrate: { label: '码率', type: 'select', options: ['32000', '64000', '128000', '256000'], placeholder: '默认（256000）', hint: 'MiniMax 可选 32000 / 64000 / 128000 / 256000' },
-  audioChannel: { label: '声道', type: 'select', options: ['1', '2'], placeholder: '默认(1)', hint: 'MiniMax 语音支持 1 或 2 声道' },
-  voice: { label: '音色', type: 'text', placeholder: '自定义音色', hint: 'MiniMax 必填官方音色 ID；ElevenLabs 可填音色名' },
-  speed: { label: '语速', type: 'number', min: 0.5, max: 2, step: 0.1, placeholder: '1.0', hint: 'MiniMax 语音语速，范围 0.5-2 倍，默认 1' },
-  emotion: { label: '情绪', type: 'text', placeholder: 'happy / sad / angry / nervous…', hint: 'MiniMax 语音情绪，如 happy / sad / angry / nervous / fearful / bored，默认按音色本身', advanced: true },
-  vol: { label: '音量（0-10）', type: 'number', min: 0, max: 10, step: 0.5, placeholder: '1', hint: 'MiniMax 语音音量，范围 0-10，默认 1', advanced: true },
-  pitch: { label: '音调（-12~12 半音）', type: 'number', min: -12, max: 12, placeholder: '0', hint: 'MiniMax 语音音调偏移，范围 -12~12 半音，默认 0', advanced: true },
-  toneText: { label: '发音词典（每行一条："文字/读音"）', type: 'text', placeholder: '处理/(chu3)(li3)\n危险/dangerous', hint: 'MiniMax 朗读读音定制，每行一条，如：危险/dangerous', advanced: true },
-  subtitle: { label: '生成字幕', type: 'checkbox', hint: '勾选后返回 MiniMax 语音的字幕内容/文件', advanced: true },
-  loop: { label: '循环音效（无缝循环）', type: 'checkbox', hint: 'ElevenLabs 音效无缝循环，仅音效模型支持' },
-  promptInfluence: { label: '提示词影响度（0-1）', type: 'number', min: 0, max: 1, step: 0.1, placeholder: '0.3', hint: 'ElevenLabs 音效提示词影响度，范围 0-1，越高越贴提示词；默认 0.3' },
-  seed: { label: '随机种子', type: 'number', min: 0, max: 4294967294, placeholder: '默认（随机）', hint: 'Stability 音频随机种子，相同种子与参数可复现；默认 0（随机）' },
-  steps: { label: '采样步数', type: 'number', min: 4, max: 100, placeholder: '默认', hint: 'Stability 音频采样步数：stable-audio-2 为 30-100；2.5 / 3 为 4-8' },
-  cfgScale: { label: '提示词遵循度', type: 'number', min: 1, max: 25, placeholder: '默认', hint: 'Stability 音频提示词遵循度，范围 1-25；stable-audio-2 默认 7，2.5 / 3 默认 1' },
+  duration: { label: '时长（秒）', type: 'number', min: 1, max: 200, placeholder: '30', hint: 'duration；MiniMax 音乐 ≤190、ElevenLabs 音乐 3-600（转 ms）、Stability 按模型 190/380' },
+  format: { label: '输出格式', type: 'select', options: ['mp3', 'wav', 'pcm', 'flac', 'ogg'], hint: 'format / output_format / response_format' },
+  lyrics: { label: '歌词（纯音乐模式可留空；多段用空行分隔）', type: 'text', placeholder: '第一段歌词…\n\n第二段歌词…', hint: 'MiniMax lyrics / ElevenLabs lyrics_text' },
+  instrumental: { label: '纯音乐（无歌词/人声）', type: 'checkbox', hint: 'MiniMax is_instrumental / ElevenLabs force_instrumental' },
+  sampleRate: { label: '采样率', type: 'select', options: ['16000', '24000', '32000', '44100'], placeholder: '默认（44100）', hint: 'audio_setting.sample_rate：16000-44100' },
+  bitrate: { label: '码率 bps', type: 'select', options: ['32000', '64000', '128000', '256000'], placeholder: '默认（256000）', hint: 'audio_setting.bitrate：32000-256000' },
+  audioChannel: { label: '声道', type: 'select', options: ['1', '2'], placeholder: '默认(1)', hint: 'audio_setting.channel（TTS）' },
+  voice: { label: '音色', type: 'text', placeholder: '自定义音色', hint: 'voice_id（MiniMax 必填）/ voice（ElevenLabs）' },
+  speed: { label: '语速', type: 'number', min: 0.5, max: 2, step: 0.1, placeholder: '1.0', hint: 'speed（MiniMax 0.5-2）' },
+  emotion: { label: '情绪 emotion', type: 'text', placeholder: 'happy / sad / angry / nervous…', hint: 'voice_setting.emotion', advanced: true },
+  vol: { label: '音量 vol (0-10)', type: 'number', min: 0, max: 10, step: 0.5, placeholder: '1', hint: 'voice_setting.vol', advanced: true },
+  pitch: { label: '音调 pitch (-12~12)', type: 'number', min: -12, max: 12, placeholder: '0', hint: 'voice_setting.pitch', advanced: true },
+  toneText: { label: '发音词典（每行一条："文字/读音"）', type: 'text', placeholder: '处理/(chu3)(li3)\n危险/dangerous', hint: 'pronunciation_dict.tone', advanced: true },
+  subtitle: { label: '生成字幕 subtitle_enable', type: 'checkbox', hint: 'subtitle_enable', advanced: true },
+  loop: { label: '循环音效 loop（无缝循环）', type: 'checkbox', hint: 'ElevenLabs loop（仅 eleven_text_to_sound_v2）' },
+  promptInfluence: { label: '提示词影响度 prompt_influence (0-1)', type: 'number', min: 0, max: 1, step: 0.1, placeholder: '0.3', hint: 'prompt_influence：越高越贴提示词' },
+  seed: { label: 'seed', type: 'number', min: 0, max: 4294967294, placeholder: '默认（随机）', hint: 'Stable Audio seed（同参数可复现）' },
+  steps: { label: 'steps', type: 'number', min: 4, max: 100, placeholder: '默认', hint: 'Stable Audio 采样步数（2: 30-100；2.5/3: 4-8）' },
+  cfgScale: { label: 'cfg_scale', type: 'number', min: 1, max: 25, placeholder: '默认', hint: 'Stable Audio 提示词遵循度（2 默认 7，2.5/3 默认 1）' },
 }
 
 function specOf(key: FieldKey, presets?: string[]): FieldSpec {
@@ -136,7 +136,7 @@ export function globalFieldSpecs(mode: AudioMode, presets: string[]): FieldSpec[
     if (all('sampleRate', MUSIC_KEYS) && presets.length > 0) list.push(specOf('sampleRate'))
     if (all('bitrate', MUSIC_KEYS) && presets.length > 0) list.push(specOf('bitrate'))
   } else if (mode === 'sfx') {
-    list.push({ ...specOf('duration'), hint: '音效时长（秒）：ElevenLabs 为 0.5-30；Stability 按模型的 190 或 380 秒上限' })
+    list.push(specOf('duration'))
     list.push({ ...specOf('format'), options: ['mp3', 'wav', 'pcm'] })
     if (all('loop', SFX_KEYS) && presets.length > 0) list.push(specOf('loop'))
     if (all('promptInfluence', SFX_KEYS) && presets.length > 0) list.push(specOf('promptInfluence'))

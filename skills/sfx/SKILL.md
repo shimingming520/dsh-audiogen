@@ -33,3 +33,9 @@ whenToUse: 用户请求生成音效、提示音、环境音、UI 音，或触发
 | prompt_influence | prompt_influence | 0-1，默认 0.3；越高越贴提示词，越低越多样 |
 
 > 响应为 audio/mpeg 二进制。请求同时携带 `xi-api-key` 与 `Authorization: Bearer`，兼容 New API 类网关。
+>
+> 网关自动回退：当渠道 API 地址不是 ElevenLabs 官方域名且官方协议被网关拒绝时
+> （404 Invalid URL / 401 Invalid token，例如 ai.farmmx.com 未映射 `/v1/sound-generation`），
+> 引擎自动改用 OpenAI 兼容形态重试：`POST {base}/audio/speech` + `Authorization: Bearer` +
+> `model=eleven_text_to_sound_v2` + `text/duration_seconds/prompt_influence/loop` 字段。
+> 官方地址（api.elevenlabs.io）直连时不触发回退。音色设计在网关无对应兼容端点，会明确报错不便死等。
