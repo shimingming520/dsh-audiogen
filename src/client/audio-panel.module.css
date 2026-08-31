@@ -1360,3 +1360,61 @@
   justify-content: flex-end;
   margin-top: -4px;
 }
+
+/* ------------------------------------------------ 音色推荐（studio 模式） */
+.recVoiceRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--dsw-alias-border-l2, #f3f4f6);
+}
+
+.recVoiceRow:first-of-type {
+  border-top: none;
+}
+
+.recRank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--dsw-accent, #2563eb);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  flex: none;
+  margin-top: 2px;
+}
+
+.recVoiceBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.recVoiceHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.recVoiceName {
+  font-size: 13px;
+  color: var(--dsw-alias-fg, #111827);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
+.recReason {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dsw-accent, #2563eb);
+}

@@ -15,6 +15,7 @@ import { tt } from './helpers.ts'
 import {
   HISTORY_API,
   type AudioMode, type GeneratedAudio, type GenerateAudioRequest, type HistoryAudioRef, type HistoryEntry, type LibraryEntry,
+  type VoiceRecommendation, type VoiceRecommendRecord,
 } from '../protocol.ts'
 import type { ModelOption } from './settings-scope.ts'
 import { AudioPlayer } from './audio-player.tsx'
@@ -104,15 +105,19 @@ function overrideSpread(override: Record<string, string>): Partial<GenerateAudio
 /** 历史记录分组 tab（全部 + 按模式）。 */
 type HistoryTab = 'all' | AudioMode
 
+/** 生成模式 + 音色推荐（prompt → 音色，结果与记录在右侧）。 */
+type StudioMode = AudioMode | 'voice_recommend'
+
 function taskIdOf(entry: HistoryEntry): string {
   const params = entry.params as Record<string, unknown> | undefined
   return typeof params?.taskId === 'string' && params.taskId !== '' ? params.taskId : ''
 }
 
-function modeLabelOf(mode: AudioMode): string {
+function modeLabelOf(mode: StudioMode): string {
   if (mode === 'tts') return tt('mode.tts')
   if (mode === 'music') return tt('mode.music')
   if (mode === 'sfx') return tt('mode.sfx')
+  if (mode === 'voice_recommend') return '音色推荐'
   return tt('mode.voiceDesign')
 }
 
@@ -233,10 +238,8 @@ export function StudioView(props: {
   reuse?: StudioReuse | null
   onLibraryChanged: () => void
   showToast: (text: string) => void
-  /** 左侧模式栏的「音色」入口：切换到音色管理（浏览/推荐/记录）。 */
-  onOpenVoices?: () => void
 }): React.JSX.Element {
-  const { api, scope, config, reuse, onOpenVoices } = props
+  const { api, scope, config, reuse } = props
   const effectiveConfig = useConfig(scope)
   const cfg = (config ?? effectiveConfig)
   const enabled = cfg?.enabled ?? true
@@ -247,9 +250,9 @@ export function StudioView(props: {
     return channel.apiUrl.trim() !== '' && keyHeld && (channel.models.length > 0 || channel.preset === 'minimax')
   })
 
-  const [mode, setMode] = useState<AudioMode>('tts')
-  /** 每个模式独立的输入内容（TTS 文本 / 音乐·音效提示词 / 音色描述），切模式互不干扰。 */
-  const [promptByMode, setPromptByMode] = useState<Record<AudioMode, string>>({ tts: '', music: '', sfx: '', voice_design: '' })
+  const [mode, setMode] = useState<StudioMode>('tts')
+  /** 每个模式独立的输入内容（TTS 文本 / 音乐·音效提示词 / 音色描述 / 音色需求），切模式互不干扰。 */
+  const [promptByMode, setPromptByMode] = useState<Record<StudioMode, string>>({ tts: '', music: '', sfx: '', voice_design: '', voice_recommend: '' })
   const prompt = promptByMode[mode] ?? ''
   const setPrompt = (next: string): void => {
     const target = mode
@@ -298,13 +301,13 @@ export function StudioView(props: {
   const [historyTab, setHistoryTab] = useState<HistoryTab>('all')
   // 模型对比
   /** 对比模式与对比模型选择按模式独立保存：恢复对比任务或切换模式时不会串到其他模块。 */
-  const [compareModeByMode, setCompareModeByMode] = useState<Record<AudioMode, boolean>>({ tts: false, music: false, sfx: false, voice_design: false })
+  const [compareModeByMode, setCompareModeByMode] = useState<Record<StudioMode, boolean>>({ tts: false, music: false, sfx: false, voice_design: false, voice_recommend: false })
   const compareMode = compareModeByMode[mode] ?? false
   const setCompareMode = (next: boolean): void => {
     const target = mode
     setCompareModeByMode(current => (current[target] === next ? current : { ...current, [target]: next }))
   }
-  const [compareModelsByMode, setCompareModelsByMode] = useState<Record<AudioMode, string[]>>({ tts: [], music: [], sfx: [], voice_design: [] })
+  const [compareModelsByMode, setCompareModelsByMode] = useState<Record<StudioMode, string[]>>({ tts: [], music: [], sfx: [], voice_design: [], voice_recommend: [] })
   const compareModels = compareModelsByMode[mode] ?? []
   const setCompareModels = (next: string[] | ((current: string[]) => string[])): void => {
     const target = mode
@@ -332,8 +335,84 @@ export function StudioView(props: {
     }
   }, [channels, modelOptions.defaultChannelId, designChannelId])
 
+  // ---- 音色推荐（左侧模式「音色推荐」：prompt → 候选音色，结果与记录在右侧） ----
+  const [recommendChannelId, setRecommendChannelId] = useState('')
+  useEffect(() => {
+    if (channels.length === 0) return
+    if (recommendChannelId === '' || !channels.some(candidate => candidate.id === recommendChannelId)) {
+      setRecommendChannelId(modelOptions.defaultChannelId ?? channels[0]!.id)
+    }
+  }, [channels, modelOptions.defaultChannelId, recommendChannelId])
+  const [recommendTopK, setRecommendTopK] = useState(5)
+  const [recommending, setRecommending] = useState(false)
+  const [recommendError, setRecommendError] = useState<string | null>(null)
+  const [recommendResult, setRecommendResult] = useState<{
+    channelId: string
+    channel: string
+    requirement: string
+    candidateCount: number
+    voices: VoiceRecommendation[]
+  } | null>(null)
+  /** 右侧推荐记录（与音色管理页、Agent action=recommend 共用同一宿主存储）。 */
+  const [recommendRecords, setRecommendRecords] = useState<VoiceRecommendRecord[]>([])
+  const loadRecommendRecords = (): void => {
+    void api.voiceRecommendHistory(30)
+      .then(response => setRecommendRecords(response.entries ?? []))
+      .catch(() => { /* best-effort */ })
+  }
+  useEffect(() => { loadRecommendRecords() }, [api]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const recommendVoice = async (): Promise<void> => {
+    const text = prompt.trim()
+    if (text === '') {
+      setRecommendError('请先描述你想要的音色，例如「17岁清亮甜美的少女音，适合活泼女主角」。')
+      return
+    }
+    if (recommendChannelId === '') {
+      setRecommendError('请先选择渠道（需要在设置中添加且填写 API 地址与密钥）。')
+      return
+    }
+    setRecommending(true)
+    setRecommendError(null)
+    setRecommendResult(null)
+    try {
+      const response = await api.voiceRecommend({ channel: recommendChannelId, requirement: text, top_k: recommendTopK })
+      if (response.ok) {
+        setRecommendResult({
+          channelId: recommendChannelId,
+          channel: response.channel ?? '',
+          requirement: text,
+          candidateCount: response.candidate_count ?? 0,
+          voices: response.recommendations ?? [],
+        })
+        void loadRecommendRecords()
+        props.showToast('推荐完成，已记录到右侧「推荐记录」')
+      } else {
+        setRecommendError(response.message ?? '音色推荐失败')
+      }
+    } catch (err) {
+      setRecommendError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRecommending(false)
+    }
+  }
+
+  /** 从推荐结果/记录复用音色：切回 TTS 并回填音色与模型。 */
+  const reuseRecommendVoice = (voiceId: string, channelId: string): void => {
+    const channel = channels.find(item => item.id === channelId)
+    const ttsModel = channel?.models.find(candidate => candidate.category === 'tts' || /tts|speech|voice|t2a/i.test(candidate.alias))
+    setMode('tts')
+    setVoice(voiceId)
+    if (ttsModel !== undefined && ttsModel.alias !== '') setModel(ttsModel.alias)
+  }
+
+  const removeRecommendRecord = async (id: string): Promise<void> => {
+    await api.voiceRecommendHistoryRemove(id).catch(() => { /* best-effort */ })
+    loadRecommendRecords()
+  }
+
   const visibleModels = useMemo(() => {
-    if (mode === 'voice_design') return []
+    if (mode === 'voice_design' || mode === 'voice_recommend') return []
     return modelOptions.models
       .filter(entry => modelSuitableForMode(entry, mode))
       .map(entry => entry.alias)
@@ -342,9 +421,10 @@ export function StudioView(props: {
   // 当前模型所属渠道 preset（单模型模式）；对比模式为所选模型渠道集合。
   const currentPreset = useMemo(() => {
     if (mode === 'voice_design') return channels.find(candidate => candidate.id === designChannelId)?.preset ?? ''
+    if (mode === 'voice_recommend') return channels.find(candidate => candidate.id === recommendChannelId)?.preset ?? ''
     const picked = modelOptions.models.find(entry => entry.alias === model) ?? modelOptions.models.find(entry => entry.alias === (visibleModels[0] ?? ''))
     return picked?.preset ?? ''
-  }, [mode, model, visibleModels, modelOptions.models, channels, designChannelId])
+  }, [mode, model, visibleModels, modelOptions.models, channels, designChannelId, recommendChannelId])
 
   const fieldPresets = useMemo(() => {
     if (mode === 'voice_design') return []
@@ -407,9 +487,12 @@ export function StudioView(props: {
     if (reuse.model !== undefined && reuse.model !== '') setModel(reuse.model)
   }, [reuse?.nonce])
 
+  /** 音色推荐模式不参与生成：生成请求一律收敛为音频模式（运行时不会触发）。 */
+  const genMode: AudioMode = mode === 'voice_recommend' ? 'tts' : mode
+
   /** Build the shared generation request for one model. */
   const requestOf = (modelName: string): GenerateAudioRequest => ({
-    mode,
+    mode: genMode,
     model: modelName,
     prompt: prompt.trim(),
     saveToLibrary,
@@ -480,7 +563,7 @@ export function StudioView(props: {
     }))
     const task: StudioTask = {
       id: taskId,
-      mode,
+      mode: genMode,
       prompt: prompt.trim(),
       kind: isCompare ? 'compare' : 'single',
       label: isCompare ? `对比 ${models.join(' / ')}` : singleModel,
@@ -936,7 +1019,7 @@ export function StudioView(props: {
               type="button"
               className={css.ghostButton}
               onClick={() => openSaveDialog([audio], {
-                mode,
+                mode: genMode,
                 prompt: prompt.trim(),
                 ...(voice.trim() !== '' ? { voice: voice.trim() } : {}),
                 ...(audio.voiceId === undefined ? {} : { voiceId: audio.voiceId }),
@@ -1012,7 +1095,7 @@ export function StudioView(props: {
     return merged.sort((left, right) => right.createdAt - left.createdAt)
   }, [entries])
 
-  const needModel = mode !== 'voice_design'
+  const needModel = mode !== 'voice_design' && mode !== 'voice_recommend'
   const runningCount = tasks.filter(task => task.status === 'running').length
   /** 结果列只显示当前模式的任务（历史面板已按模式分组）。 */
   const visibleTasks = useMemo(() => tasks.filter(task => task.mode === mode), [tasks, mode])
@@ -1021,7 +1104,7 @@ export function StudioView(props: {
     <div className={css.studio}>
       <div className={css.formCol}>
         <div className={css.modeRow}>
-          {([['tts', '🎙️'], ['music', '🎵'], ['sfx', '🔊'], ['voice_design', '🎨']] as Array<[AudioMode, string]>).map(([item, icon]) => (
+          {([['tts', '🎙️'], ['music', '🎵'], ['sfx', '🔊'], ['voice_design', '🎨'], ['voice_recommend', '🎤']] as Array<[StudioMode, string]>).map(([item, icon]) => (
             <button
               key={item}
               type="button"
@@ -1033,31 +1116,26 @@ export function StudioView(props: {
               {modeLabelOf(item)}
             </button>
           ))}
-          {onOpenVoices === undefined ? null : (
-            <button
-              type="button"
-              className={css.modeButton}
-              data-active="false"
-              onClick={() => onOpenVoices()}
-              title="浏览/筛选厂商音色、AI 推荐音色（结果自动记录）"
-            >
-              <span className={css.modeIcon}>🎤</span>
-              音色
-            </button>
-          )}
         </div>
 
         <p className={css.formSection}>输入</p>
         <label className={css.label}>
-          <span>{mode === 'voice_design' ? '音色描述' : mode === 'tts' ? '文本' : '提示词'}</span>
-          <textarea className={css.textarea} value={prompt} onChange={event => setPrompt(event.target.value)} placeholder={tt('prompt.placeholder')} />
+          <span>{mode === 'voice_design' ? '音色描述' : mode === 'voice_recommend' ? '音色需求' : mode === 'tts' ? '文本' : '提示词'}</span>
+          <textarea
+            className={css.textarea}
+            value={prompt}
+            onChange={event => setPrompt(event.target.value)}
+            placeholder={mode === 'voice_recommend' ? '描述你想要的音色，例如：17岁清亮甜美的少女音，适合活泼女主角，英式口音…' : tt('prompt.placeholder')}
+          />
         </label>
-        <div className={css.enhanceActionsRow}>
-          <button type="button" className={css.ghostButton} disabled={enhancing} onClick={() => void runEnhance()}>
-            {enhancing ? '增强中…' : '✨ 增强提示词'}
-          </button>
-        </div>
-        {enhancePreview !== null ? (
+        {mode !== 'voice_recommend' ? (
+          <div className={css.enhanceActionsRow}>
+            <button type="button" className={css.ghostButton} disabled={enhancing} onClick={() => void runEnhance()}>
+              {enhancing ? '增强中…' : '✨ 增强提示词'}
+            </button>
+          </div>
+        ) : null}
+        {enhancePreview !== null && mode !== 'voice_recommend' ? (
           <div className={css.enhanceCard}>
             <div className={css.enhanceCardHead}>
               <strong>增强结果（{modeLabelOf(mode)}）</strong>
@@ -1089,6 +1167,27 @@ export function StudioView(props: {
               <span>试听文本</span>
               <input className={css.input} value={previewText} onChange={event => setPreviewText(event.target.value)} placeholder="你好，这是新设计的音色试听。" />
             </label>
+          </>
+        ) : mode === 'voice_recommend' ? (
+          <>
+            <label className={css.label}>
+              <span>厂商 / 渠道</span>
+              <select className={css.input} value={recommendChannelId} onChange={event => setRecommendChannelId(event.target.value)}>
+                {channels.map(channel => (
+                  <option key={channel.id} value={channel.id}>{channel.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className={css.label}>
+              <span>推荐数量</span>
+              <select className={css.input} value={String(recommendTopK)} onChange={event => setRecommendTopK(Number(event.target.value))}>
+                <option value="3">3 条</option>
+                <option value="5">5 条</option>
+                <option value="8">8 条</option>
+                <option value="10">10 条</option>
+              </select>
+            </label>
+            <p className={css.hint}>按需求描述挑选：候选范围为该渠道全部可用音色（语言/口音等由描述自然约束），结果会记录到右侧「推荐记录」</p>
           </>
         ) : null}
 
@@ -1209,25 +1308,95 @@ export function StudioView(props: {
           </details>
         ) : null}
 
-        <label className={css.checkbox} title="生成完成后自动保存到资源库；也可在设置中开启全部自动保存">
-          <input type="checkbox" checked={saveToLibrary} onChange={event => setSaveToLibrary(event.target.checked)} />
-          <span>生成后保存到资源库</span>
-        </label>
+        {mode !== 'voice_recommend' ? (
+          <label className={css.checkbox} title="生成完成后自动保存到资源库；也可在设置中开启全部自动保存">
+            <input type="checkbox" checked={saveToLibrary} onChange={event => setSaveToLibrary(event.target.checked)} />
+            <span>生成后保存到资源库</span>
+          </label>
+        ) : null}
 
         {!connected && <p className={css.hint}>{tt('config.missing')}</p>}
-        <button
-          type="button"
-          className={css.generate}
-          disabled={!connected || (compareMode && needModel ? compareModels.length < 2 : needModel && visibleModels.length === 0)}
-          onClick={submit}
-        >
-          {(compareMode && needModel ? '对比生成' : tt('generate'))}
-        </button>
+        {mode === 'voice_recommend' ? (
+          <button
+            type="button"
+            className={css.generate}
+            disabled={!connected || recommending}
+            onClick={() => void recommendVoice()}
+          >
+            {recommending ? 'AI 推荐中…' : '✨ AI 推荐音色'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={css.generate}
+            disabled={!connected || (compareMode && needModel ? compareModels.length < 2 : needModel && visibleModels.length === 0)}
+            onClick={submit}
+          >
+            {(compareMode && needModel ? '对比生成' : tt('generate'))}
+          </button>
+        )}
         {runningCount > 0 ? <p className={css.hint}>进行中任务：{runningCount} 个（并发上限在「设置 → 插件 → AI 音频」调整）</p> : null}
       </div>
 
       <div className={css.resultCol}>
-        {error !== null ? <p className={css.error}>{error}</p> : null}
+        {mode === 'voice_recommend' ? (
+          <>
+            {recommendError !== null ? <p className={css.error}>{recommendError}</p> : null}
+            {recommending ? (
+              <div className={css.resultEmpty}>
+                <span className={css.resultEmptyIcon}>🎤</span>
+                <p>正在让模型从候选音色中挑选…（约 10-45 秒，结果会记录到右侧）</p>
+              </div>
+            ) : null}
+            {!recommending && recommendResult !== null ? (
+              <div className={css.taskList}>
+                <div className={css.taskCard}>
+                  <div className={css.taskHead}>
+                    <span className={css.resultModeChip}>音色推荐</span>
+                    <span className={css.taskLabel} title={recommendResult.requirement}>{recommendResult.requirement}</span>
+                  </div>
+                  <div className={css.historyMeta}>
+                    {recommendResult.channel} · 候选池 {recommendResult.candidateCount} 个音色 · 推荐 {recommendResult.voices.length} 条
+                  </div>
+                  {recommendResult.voices.map((voice, index) => (
+                    <div className={css.recVoiceRow} key={`${voice.source}:${voice.voice_id}`}>
+                      <span className={css.recRank}>{index + 1}</span>
+                      <div className={css.recVoiceBody}>
+                        <div className={css.recVoiceHead}>
+                          <strong className={css.recVoiceName} title={voice.name}>{voice.name}</strong>
+                        </div>
+                        {voice.reason === '' ? null : <p className={css.recReason}>{voice.reason}</p>}
+                        <div className={css.historyMeta}>
+                          ID: {voice.voice_id}{voice.language === undefined ? '' : ` · ${voice.language}`}{voice.accent === undefined ? '' : ` · ${voice.accent}`}{voice.gender === undefined ? '' : ` · ${voice.gender}`}{voice.age === undefined ? '' : ` · ${voice.age}`}
+                        </div>
+                        {voice.preview_url === undefined || voice.preview_url === '' ? null : <AudioPlayer src={voice.preview_url} compact />}
+                      </div>
+                      <button type="button" className={css.ghostButton} onClick={() => reuseRecommendVoice(voice.voice_id, recommendResult.channelId)}>
+                        用此音色生成
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {!recommending && recommendResult === null ? (
+              <div className={css.resultEmpty}>
+                <span className={css.resultEmptyIcon}>🎤</span>
+                <p>在左侧描述想要的音色，点「✨ AI 推荐音色」</p>
+                <p className={css.resultEmptyHint}>模型会从该渠道候选池里挑最匹配的 top-k 音色；每次推荐自动记录到右侧「推荐记录」</p>
+                <button
+                  type="button"
+                  className={css.ghostButton}
+                  onClick={() => setPrompt('17岁清亮甜美的少女音，适合活泼女主角，英式口音')}
+                >
+                  填入示例需求
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <>
+            {error !== null ? <p className={css.error}>{error}</p> : null}
         {visibleTasks.length === 0 ? (
           <div className={css.resultEmpty}>
             <span className={css.resultEmptyIcon}>🎵</span>
@@ -1300,9 +1469,57 @@ export function StudioView(props: {
             })}
           </div>
         )}
+          </>
+        )}
       </div>
 
       <aside className={css.historyCol}>
+        {mode === 'voice_recommend' ? (
+          <>
+            <div className={css.historyHeader}>
+              <strong className={css.historyTitle}>推荐记录</strong>
+            </div>
+            {recommendRecords.length === 0 ? (
+              <p className={css.historyEmpty}>还没有推荐记录——在左侧输入音色需求，点「✨ AI 推荐音色」后自动记录在这里</p>
+            ) : (
+              <div className={css.historyList}>
+                {recommendRecords.map(record => (
+                  <details className={css.historyItem} key={record.id}>
+                    <summary className={css.historyCompareSummary}>
+                      <span className={css.historyPrompt}>{record.requirement}</span>
+                      <span className={css.historyCompareBadge}>{record.channel} · {record.recommendations.length} 条</span>
+                      <span className={css.historyTime}>{formatClock(record.createdAt)}</span>
+                    </summary>
+                    <div className={css.historyMeta}>候选池 {record.candidate_count} 个音色</div>
+                    {record.recommendations.map((voice, index) => (
+                      <div className={css.recVoiceRow} key={`${record.id}:${voice.voice_id}`}>
+                        <span className={css.recRank}>{index + 1}</span>
+                        <div className={css.recVoiceBody}>
+                          <div className={css.recVoiceHead}>
+                            <strong className={css.recVoiceName} title={voice.name}>{voice.name}</strong>
+                          </div>
+                          {voice.reason === '' ? null : <p className={css.recReason}>{voice.reason}</p>}
+                          <div className={css.historyMeta}>ID: {voice.voice_id}</div>
+                        </div>
+                        <button
+                          type="button"
+                          className={css.ghostButton}
+                          onClick={() => reuseRecommendVoice(voice.voice_id, record.channel_id ?? recommendChannelId)}
+                        >
+                          用此音色生成
+                        </button>
+                      </div>
+                    ))}
+                    <div className={css.historyActions}>
+                      <button type="button" className={css.historyIcon} title="删除这条推荐记录" onClick={() => void removeRecommendRecord(record.id)}>✕</button>
+                    </div>
+                  </details>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
         <div className={css.historyHeader}>
           <strong className={css.historyTitle}>{tt('history.title')}</strong>
           <button type="button" className={css.historyClear} onClick={clear}>清空</button>
@@ -1395,6 +1612,8 @@ export function StudioView(props: {
                 )
               })}
             </div>
+          </>
+        )}
           </>
         )}
       </aside>

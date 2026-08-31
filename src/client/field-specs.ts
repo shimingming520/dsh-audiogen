@@ -117,7 +117,8 @@ function specOf(key: FieldKey, presets?: string[]): FieldSpec {
 }
 
 /** 当前模式 + 所选模型集合（渠道集合）对应的「全局字段」清单。 */
-export function globalFieldSpecs(mode: AudioMode, presets: string[]): FieldSpec[] {
+export function globalFieldSpecs(mode: AudioMode | 'voice_recommend', presets: string[]): FieldSpec[] {
+  if (mode === 'voice_recommend') return []
   const list: FieldSpec[] = []
   const all = (key: FieldKey, keys: FieldKey[]): boolean => keys.includes(key) && presets.every(preset => presetSupports(preset, key, mode))
   if (mode === 'tts') {
@@ -146,7 +147,8 @@ export function globalFieldSpecs(mode: AudioMode, presets: string[]): FieldSpec[
 }
 
 /** 「每模型参数覆盖」矩阵的字段全集（含适用渠道标注）。 */
-export function overrideRowSpecs(mode: AudioMode): Array<FieldSpec & { presets: string[] }> {
+export function overrideRowSpecs(mode: AudioMode | 'voice_recommend'): Array<FieldSpec & { presets: string[] }> {
+  if (mode === 'voice_recommend') return []
   const rows: Array<FieldSpec & { presets: string[] }> = []
   const presets: Array<[FieldKey, string[]]> = [
     ['format', [PRESET_MINIMAX, PRESET_ELEVENLABS, PRESET_STABILITY]],
