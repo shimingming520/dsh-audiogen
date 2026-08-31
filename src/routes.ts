@@ -234,7 +234,7 @@ function libraryTypeOf(mode: GenerateAudioRequest['mode']): LibraryType {
 }
 
 /** Provenance snapshot straight from a resolved generate request. */
-function provenanceOf(request: GenerateAudioRequest, apiUrl: string): LibraryProvenance {
+function provenanceOf(request: GenerateAudioRequest, apiUrl: string, voiceId?: string): LibraryProvenance {
   return {
     mode: request.mode,
     prompt: request.prompt,
@@ -244,6 +244,7 @@ function provenanceOf(request: GenerateAudioRequest, apiUrl: string): LibraryPro
     ...(request.model === undefined || request.model === '' ? {} : { model: request.model }),
     ...(request.upstream === undefined || request.upstream === '' ? {} : { upstream: request.upstream }),
     ...(request.voice === undefined ? {} : { voice: request.voice }),
+    ...(voiceId === undefined || voiceId === '' ? {} : { voiceId }),
     params: { ...request },
   }
 }
@@ -279,6 +280,8 @@ async function mergeLibraryProvenance(
   const history = await listHistory()
   const entry = history.find(candidate => candidate.audio.some(audio => wanted.has(historyFileIdOf(audio.url))))
   const params = entry?.params !== undefined && typeof entry.params === 'object' ? entry.params : undefined
+  // 旧记录的 voiceId 只存在于 history audio 引用上（音频文件名匹配），也作兜底。
+  const audioRef = entry?.audio.find(audio => wanted.has(historyFileIdOf(audio.url)))
   const channel = channels.find(candidate => candidate.id === (entry?.channelId ?? ''))
   return {
     mode: entry?.mode ?? given.mode,
@@ -290,7 +293,8 @@ async function mergeLibraryProvenance(
     ...((given.upstream ?? (typeof params?.upstream === 'string' ? params.upstream : undefined)) !== undefined
       ? { upstream: given.upstream ?? (typeof params?.upstream === 'string' ? params.upstream : undefined) } : {}),
     ...(given.voice !== undefined || entry?.voice !== undefined ? { voice: given.voice ?? entry?.voice } : {}),
-    ...(given.voiceId !== undefined || entry?.voiceId !== undefined ? { voiceId: given.voiceId ?? entry?.voiceId } : {}),
+    ...(given.voiceId !== undefined || entry?.voiceId !== undefined || audioRef?.voiceId !== undefined
+      ? { voiceId: given.voiceId ?? entry?.voiceId ?? audioRef?.voiceId } : {}),
     ...(given.params !== undefined || params !== undefined ? { params: given.params ?? params } : {}),
   }
 }
@@ -508,7 +512,7 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
                   ...(audio.voiceId === undefined ? {} : { voiceId: audio.voiceId }),
                 })),
                 type: libraryTypeOf(request.mode),
-                provenance: provenanceOf(request, channel.apiUrl),
+                provenance: provenanceOf(request, channel.apiUrl, generated[0]?.voiceId),
               })
               resources = [{ id: entry.id, name: entry.name, type: entry.type }]
             } catch {

@@ -21,9 +21,29 @@ whenToUse: 需要查看某个渠道（MiniMax / ElevenLabs）有哪些可用音�
 
 - `channel`：设置中的渠道名称或 id；缺省用默认渠道，多渠道时必须指定。
 - `language`：语言子串（`en` / `zh` / `ja`，或 `Chinese (Mandarin)` 等）。
-- `keyword`：音色名/描述/口音/用途中的自由词。
+- `keyword`：音色名/描述/口音/用途中的自由词（本地过滤）。
 - `source`：`system`（官方预置）| `custom`（MiniMax 自建）| `owned`（ElevenLabs 自有）| `shared`（ElevenLabs 社区库）。
 - 返回每条含 `voice_id` / `name` / `source` / `deletable` / `description` / `preview_url`。
+
+### ElevenLabs 官方共享库筛选（服务端参数，对应官方 GET /v1/shared-voices）
+
+```json
+{"action": "list", "channel": "ElevenLabs", "use_case": "characters_animation", "accent": "british", "gender": "female", "sort": "most_used", "featured": true}
+```
+
+| 参数 | 说明 |
+|---|---|
+| `search` | 共享库自由文本搜索 |
+| `use_case` | 用途，如 `characters_animation` / `conversational` / `narration` / `gaming` |
+| `accent` | 口音，如 `british` / `american` / `australian` |
+| `gender` | `male` / `female` |
+| `age` | 年龄段，如 `adult` / `young` / `middle_aged` |
+| `locale` | 方言，如 `en-us` / `en-gb` |
+| `category` | 分类，如 `animation` |
+| `sort` | `most_used` / `random` / `oldest` / `newest` |
+| `featured` / `free_users_allowed` / `descriptive` | 布尔筛选（仅传 true 时生效） |
+
+这些参数只对 ElevenLabs 共享库起作用（服务端筛选），自有音色与其他渠道按同名字段本地兜底；MiniMax 无服务端筛选端点，会在返回 `note` 中说明。
 
 ## 删除音色（action=delete）
 

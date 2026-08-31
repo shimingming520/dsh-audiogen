@@ -122,6 +122,12 @@ export function LibraryView(props: {
   }, [entries])
 
   const detail = entries.find(entry => entry.id === detailId) ?? null
+  /** Voice ID：provenance 优先；旧记录未写入时从 files[].voiceId 兜底。 */
+  const drawerVoiceId = detail?.provenance.voiceId ?? detail?.files.find(file => file.voiceId !== undefined)?.voiceId
+  /** 音色设计音频对应的试听文本（存于 provenance.params 快照）。 */
+  const drawerPreviewText = typeof detail?.provenance.params?.['previewText'] === 'string' && (detail.provenance.params['previewText'] as string).trim() !== ''
+    ? (detail.provenance.params['previewText'] as string).trim()
+    : undefined
 
   const currentCategoryOptions = useMemo(() => {
     if (typeFilter === 'all') return []
@@ -446,18 +452,21 @@ export function LibraryView(props: {
                     </div>
                   ) : null}
                   {detail.provenance.voice !== undefined ? <div className={css.provRow}><span className={css.provKey}>音色</span><span className={css.provValue}>{detail.provenance.voice}</span></div> : null}
-                  {detail.provenance.voiceId !== undefined ? (
+                  {drawerVoiceId !== undefined ? (
                     <div className={css.provRow}>
                       <span className={css.provKey}>Voice ID</span>
                       <span className={css.provValue}>
-                        <code className={css.code}>{detail.provenance.voiceId}</code>
-                        <button type="button" className={css.iconBtn} title="复制 Voice ID" onClick={() => void copyText(detail.provenance.voiceId!, `vid-${detail.id}`)}>
+                        <code className={css.code}>{drawerVoiceId}</code>
+                        <button type="button" className={css.iconBtn} title="复制 Voice ID" onClick={() => void copyText(drawerVoiceId, `vid-${detail.id}`)}>
                           {copied === `vid-${detail.id}` ? <CheckIcon /> : <CopyIcon />}
                         </button>
                       </span>
                     </div>
                   ) : null}
                   <div className={css.provRow}><span className={css.provKey}>提示词</span><span className={`${css.provValue} ${css.promptText}`}>{detail.provenance.prompt || '—'}</span></div>
+                  {drawerPreviewText !== undefined ? (
+                    <div className={css.provRow}><span className={css.provKey}>试听文本</span><span className={`${css.provValue} ${css.promptText}`}>{drawerPreviewText}</span></div>
+                  ) : null}
                   <div className={css.provRow}><span className={css.provKey}>创建时间</span><span className={css.provValue}>{new Date(detail.createdAt).toLocaleString('zh-CN', { hour12: false })}</span></div>
                   {detail.provenance.params !== undefined ? (
                     <div className={css.provRow}>
@@ -478,14 +487,14 @@ export function LibraryView(props: {
               </div>
 
               <div className={css.drawerActions}>
-                {detail.provenance.voiceId !== undefined || detail.provenance.voice !== undefined ? (
+                {drawerVoiceId !== undefined || detail.provenance.voice !== undefined ? (
                   <button
                     type="button"
                     className={css.primaryBtn}
                     onClick={() => {
                       props.onReuseVoice({
                         mode: 'tts',
-                        ...(detail.provenance.voiceId !== undefined ? { voiceId: detail.provenance.voiceId } : {}),
+                        ...(drawerVoiceId !== undefined ? { voiceId: drawerVoiceId } : {}),
                         ...(detail.provenance.voice !== undefined ? { voice: detail.provenance.voice } : {}),
                         ...(detail.provenance.model !== undefined ? { model: detail.provenance.model } : {}),
                       })

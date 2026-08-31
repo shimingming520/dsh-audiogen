@@ -192,15 +192,31 @@ function audioRefsOfEntry(entry: HistoryEntry): GeneratedAudio[] {
 }
 
 function contextOfEntry(entry: HistoryEntry): SaveDialogContext {
+  const voiceId = entry.voiceId ?? entry.audio.find(audio => audio.voiceId !== undefined)?.voiceId
   return {
     mode: entry.mode,
     prompt: entry.prompt,
     ...(entry.voice === undefined ? {} : { voice: entry.voice }),
-    ...(entry.voiceId === undefined ? {} : { voiceId: entry.voiceId }),
+    ...(voiceId === undefined ? {} : { voiceId }),
     ...(entry.model === undefined ? {} : { model: entry.model }),
     ...(entry.channel === undefined ? {} : { channel: entry.channel }),
     ...(entry.channelId === undefined ? {} : { channelId: entry.channelId }),
     ...(entry.params === undefined ? {} : { params: entry.params }),
+  }
+}
+
+/** 历史条目 → 恢复参数：params 快照优先；旧记录无快照时回退到条目顶层字段。 */
+function paramsOfEntry(entry: HistoryEntry): Record<string, unknown> {
+  return {
+    ...(entry.prompt.trim() !== '' ? { prompt: entry.prompt.trim() } : {}),
+    ...(entry.model !== '' ? { model: entry.model } : {}),
+    ...(entry.voice === undefined ? {} : { voice: entry.voice }),
+    ...(entry.speed === undefined ? {} : { speed: entry.speed }),
+    ...(entry.duration === undefined ? {} : { duration: entry.duration }),
+    ...(entry.format === undefined ? {} : { format: entry.format }),
+    ...(entry.channelId === undefined ? {} : { channelId: entry.channelId }),
+    ...(entry.channel === undefined ? {} : { channel: entry.channel }),
+    ...(entry.params === undefined ? {} : entry.params),
   }
 }
 
@@ -769,10 +785,19 @@ export function StudioView(props: {
         )
       case 'instrumental':
         return (
-          <label className={css.checkbox} key={spec.key} title={spec.hint}>
-            <input type="checkbox" checked={instrumental} onChange={event => setInstrumental(event.target.checked)} />
-            <span>{spec.label}（是：{currentPreset === 'elevenlabs' ? 'force_instrumental' : 'is_instrumental'}）</span>
-          </label>
+          <div className={css.label} key={spec.key} title={spec.hint}>
+            <span>{spec.label}</span>
+            <div className={css.radioGroup}>
+              <label className={css.radioOption} data-active={instrumental ? 'true' : 'false'}>
+                <input type="radio" name="instrumental" checked={instrumental} onChange={() => setInstrumental(true)} />
+                <span>是</span>
+              </label>
+              <label className={css.radioOption} data-active={instrumental ? 'false' : 'true'}>
+                <input type="radio" name="instrumental" checked={!instrumental} onChange={() => setInstrumental(false)} />
+                <span>否</span>
+              </label>
+            </div>
+          </div>
         )
       case 'sampleRate':
         return (
@@ -1312,7 +1337,7 @@ export function StudioView(props: {
                       ))}
                       <div className={css.historyActions}>
                         <button type="button" className={css.historyIcon} title="恢复（回填配置与全部模型）" onClick={() => restoreFromParams(
-                          (item.models[0]?.entry.params ?? {}) as Record<string, unknown>,
+                          item.models.length > 0 ? paramsOfEntry(item.models[0]!.entry) : {},
                           item.mode,
                           item.models[0]?.model ?? '',
                           item.models.map(model => model.model),
@@ -1335,7 +1360,7 @@ export function StudioView(props: {
                     ))}
                     <div className={css.historyActions}>
                       <button type="button" className={css.historyIcon} title="恢复（回填配置与 prompt）" onClick={() => restoreFromParams(
-                        (entry.params ?? {}) as Record<string, unknown>,
+                        paramsOfEntry(entry),
                         entry.mode,
                         entry.model,
                         undefined,

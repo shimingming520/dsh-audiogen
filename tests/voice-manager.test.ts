@@ -226,6 +226,70 @@ test('delete ElevenLabs：自有音色删除成功', async () => {
   assert.equal(result.vendor, 'elevenlabs')
 })
 
+test('list ElevenLabs：官方筛选参数透传 shared-voices query', async () => {
+  const urls: string[] = []
+  ;(globalThis as { fetch: unknown }).fetch = async (url: string | URL) => {
+    const target = String(url)
+    urls.push(target)
+    if (target.includes('/voices')) return new Response(JSON.stringify({ voices: [] }), { status: 200 })
+    if (target.includes('/shared-voices')) return new Response(JSON.stringify({ voices: [], has_more: false }), { status: 200 })
+    throw new Error(`unexpected ${target}`)
+  }
+  await listVendorVoices(elevenChannel, {
+    language: 'en',
+    serverFilters: {
+      search: 'warm', use_case: 'narration', accent: 'british', gender: 'female',
+      age: 'adult', locale: 'en-gb', category: 'animation', sort: 'most_used',
+      featured: true, free_users_allowed: true, descriptive: true,
+    },
+  })
+  const sharedUrl = urls.find(url => url.includes('/shared-voices'))!
+  const query = new URL(sharedUrl).searchParams
+  for (const [key, value] of Object.entries({
+    language: 'en', search: 'warm', use_case: 'narration', accent: 'british',
+    gender: 'female', age: 'adult', locale: 'en-gb', category: 'animation',
+    sort: 'most_used', featured: 'true', free_users_allowed: 'true', descriptive: 'true',
+  })) {
+    assert.equal(query.get(key), value, `query ${key}`)
+  }
+})
+
+test('官方筛选字段本地兜底：owned 音色也按 accent/gender 过滤', async () => {
+  installFetch([
+    {
+      url: '/voices',
+      body: {
+        voices: [
+          { voice_id: 'own_1', name: 'British Ow', labels: { accent: 'british', gender: 'male' } },
+          { voice_id: 'own_2', name: 'American Ow', labels: { accent: 'american', gender: 'female' } },
+        ],
+      },
+    },
+    { url: '/shared-voices', body: { voices: [], has_more: false } },
+  ])
+  const result = await listVendorVoices(elevenChannel, {
+    serverFilters: { accent: 'british', gender: 'male' },
+  })
+  assert.equal(result.voices.length, 1)
+  assert.equal(result.voices[0]!.voice_id, 'own_1')
+})
+
+test('list MiniMax：服务端筛选参数以 note 说明（本地兜底过滤）', async () => {
+  installFetch([
+    {
+      url: '/v1/get_voice',
+      method: 'POST',
+      body: {
+        system_voice: [{ voice_id: 'Japanese_CalmLady', voice_name: 'Calm Lady' }],
+        voice_cloning: [],
+        base_resp: { status_code: 0 },
+      },
+    },
+  ])
+  const result = await listVendorVoices(minimaxChannel, { serverFilters: { use_case: 'narration' } })
+  assert.ok(result.note?.includes('use_case'))
+})
+
 test('不支持的渠道明确报错', async () => {
   await assert.rejects(
     () => listVendorVoices({ ...minimaxChannel, preset: 'stability', apiUrl: 'https://stability.example' }),

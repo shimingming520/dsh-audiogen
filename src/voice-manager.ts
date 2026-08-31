@@ -38,13 +38,36 @@ export interface VendorVoiceEntry {
 export interface ListVoicesOptions {
   /** Free-text filter over name/description/accent/use_case (case-insensitive). */
   keyword?: string
-  /** Substring filter over language/locale (e.g. "en", "Chinese"). */
+  /** Substring filter over language/locale (e.g. "en", "Chinese"); also sent
+   *  as the `language` query of /v1/shared-voices. */
   language?: string
   /** Filter by entry source: system/custom/owned/shared. */
   source?: string
-  /** Hard cap on returned entries (default 100). */
+  /** Hard cap on returned entries (default 100, max 200). */
   limit?: number
+  /** Official /v1/shared-voices server-side filters (ElevenLabs shared library
+   *  only; MiniMax has no equivalent and reports them in `note`). Also applied
+   *  locally as a fallback so owned voices / other providers honor them too. */
+  serverFilters?: SharedVoiceFilters
 }
+
+/** Official GET /v1/shared-voices query parameters (ElevenLabs voice library). */
+export interface SharedVoiceFilters {
+  search?: string
+  use_case?: string
+  accent?: string
+  gender?: string
+  age?: string
+  locale?: string
+  category?: string
+  sort?: 'most_used' | 'random' | 'oldest' | 'newest'
+  /** Only true is sent (false = no filter, matches "not filtered"). */
+  featured?: boolean
+  free_users_allowed?: boolean
+  descriptive?: boolean
+}
+
+const SHARED_VOICE_SORT_OPTIONS = ['most_used', 'random', 'oldest', 'newest'] as const
 
 export interface ListVoicesResult {
   vendor: string
@@ -199,6 +222,7 @@ async function listElevenLabs(channel: AudioChannel, options: ListVoicesOptions)
   const headers = { 'xi-api-key': channel.apiKey.trim(), accept: 'application/json' }
   const entries: VendorVoiceEntry[] = []
   const failures: string[] = []
+  const filters = options.serverFilters ?? {}
 
   // 1. Account-owned voices (/v1/voices) — deletable.
   try {
@@ -213,11 +237,23 @@ async function listElevenLabs(channel: AudioChannel, options: ListVoicesOptions)
   }
 
   // 2. Community library (/v1/shared-voices, up to 3 pages) — read-only.
+  //    Official server-side filters are forwarded for the shared library.
   const pageSize = 100
   try {
     for (let page = 0; page < 3; page += 1) {
       const query = new URLSearchParams({ page_size: String(pageSize), page: String(page) })
       if (options.language !== undefined && options.language.trim() !== '') query.set('language', options.language.trim())
+      if (filters.search !== undefined && filters.search.trim() !== '') query.set('search', filters.search.trim())
+      if (filters.use_case !== undefined && filters.use_case.trim() !== '') query.set('use_case', filters.use_case.trim())
+      if (filters.accent !== undefined && filters.accent.trim() !== '') query.set('accent', filters.accent.trim())
+      if (filters.gender !== undefined && filters.gender.trim() !== '') query.set('gender', filters.gender.trim())
+      if (filters.age !== undefined && filters.age.trim() !== '') query.set('age', filters.age.trim())
+      if (filters.locale !== undefined && filters.locale.trim() !== '') query.set('locale', filters.locale.trim())
+      if (filters.category !== undefined && filters.category.trim() !== '') query.set('category', filters.category.trim())
+      if (filters.sort !== undefined && (SHARED_VOICE_SORT_OPTIONS as readonly string[]).includes(filters.sort)) query.set('sort', filters.sort)
+      if (filters.featured === true) query.set('featured', 'true')
+      if (filters.free_users_allowed === true) query.set('free_users_allowed', 'true')
+      if (filters.descriptive === true) query.set('descriptive', 'true')
       const payload = await fetchJson(`${base}/shared-voices?${query.toString()}`, { headers }) as {
         voices?: unknown[]
         has_more?: boolean
@@ -271,7 +307,9 @@ export async function listVendorVoices(
     return {
       vendor: result.vendor,
       ...applyFilter(result.voices, options),
-      ...(result.note === undefined ? {} : { note: result.note }),
+      ...(serverFilterNote(options.serverFilters) === undefined
+        ? {}
+        : { note: serverFilterNote(options.serverFilters)! }),
     }
   }
   const result = await listElevenLabs(channel, options)
@@ -351,6 +389,16 @@ function cap(options: ListVoicesOptions): number {
   return Math.max(1, Math.min(200, limit))
 }
 
+/** Which official shared-voice filters are set (for the MiniMax "not supported" note). */
+export function serverFilterNote(filters?: SharedVoiceFilters): string | undefined {
+  if (filters === undefined) return undefined
+  const set = Object.entries(filters)
+    .filter(([, value]) => value !== undefined && value !== false)
+    .map(([key]) => key)
+  return set.length === 0 ? undefined
+    : `MiniMax 无服务端筛选端点：${set.join(', ')} 仅在本地按已有字段兜底过滤`
+}
+
 function applyFilter(
   entries: VendorVoiceEntry[],
   options: ListVoicesOptions,
@@ -358,12 +406,27 @@ function applyFilter(
   const keyword = options.keyword?.trim().toLowerCase() ?? ''
   const language = options.language?.trim().toLowerCase() ?? ''
   const source = options.source?.trim().toLowerCase() ?? ''
+  const filters = options.serverFilters ?? {}
+  const field = (value?: string): string => value?.trim().toLowerCase() ?? ''
   const count = cap(options)
   const matched = entries.filter(entry => {
     if (source !== '' && entry.source !== source) return false
     if (language !== '') {
       const haystack = [entry.language ?? '', entry.locale ?? ''].join(' ').toLowerCase()
       if (!haystack.includes(language)) return false
+    }
+    // Official shared-voice filters double as local fallback filters so they
+    // also apply to owned voices and providers without server-side support.
+    if (field(filters.accent) !== '' && field(entry.accent) !== field(filters.accent)) return false
+    if (field(filters.gender) !== '' && field(entry.gender) !== field(filters.gender)) return false
+    if (field(filters.age) !== '' && field(entry.age) !== field(filters.age)) return false
+    if (field(filters.use_case) !== '' && field(entry.use_case) !== field(filters.use_case)) return false
+    if (field(filters.category) !== '' && field(entry.category) !== field(filters.category)) return false
+    if (field(filters.locale) !== '' && field(entry.locale) !== field(filters.locale)) return false
+    const search = field(filters.search)
+    if (search !== '') {
+      const haystack = [entry.name, entry.description ?? ''].join(' ').toLowerCase()
+      if (!haystack.includes(search)) return false
     }
     if (keyword !== '') {
       const haystack = [entry.name, entry.description ?? '', entry.accent ?? '',

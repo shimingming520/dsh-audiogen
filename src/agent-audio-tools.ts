@@ -554,13 +554,24 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
   /** 厂商音色管理：浏览/筛选 + 删除（仅自建）。删除不可逆，必须 confirm=true。 */
   const managementDisposer = ctx.tools.register(defineTool({
     name: 'manage_audio_voices',
-    description: 'Manage vendor voice libraries (MiniMax / ElevenLabs). action=list: browse available TTS voices of a channel — official/shared voices plus voices designed/cloned by the account, with language/keyword/source filtering; returns voice_id/name/source/description/preview_url and whether each voice is deletable. action=delete: delete one OWNED voice (custom/owned only; official/shared/system voices are read-only and refused) — irreversible, so confirm must be true (pass the exact voice_id from action=list). Use the returned voice_id with generate_audio (mode=tts, voice=<voice_id>) to speak with the selected voice.',
+    description: 'Manage vendor voice libraries (MiniMax / ElevenLabs). action=list: browse available TTS voices of a channel — official/shared voices plus voices designed/cloned by the account; filtering supports the official /v1/shared-voices server-side filters (search/use_case/accent/gender/age/locale/category/sort/featured/free_users_allowed/descriptive) for the ElevenLabs shared library, plus local language/keyword/source filtering everywhere; returns voice_id/name/source/description/preview_url and whether each voice is deletable. action=delete: delete one OWNED voice (custom/owned only; official/shared/system voices are read-only and refused) — irreversible, so confirm must be true (pass the exact voice_id from action=list). Use the returned voice_id with generate_audio (mode=tts, voice=<voice_id>) to speak with the selected voice.',
     parameters: {
       action: { type: 'string', enum: ['list', 'delete'], required: true, description: 'list = browse/filter voices; delete = remove an owned voice.' },
       channel: { type: 'string', description: 'Channel name or id (e.g. the channel shown in settings). Defaults to the default channel; required when more than one channel is configured.' },
       language: { type: 'string', description: 'Filter for list: language substring (ISO code like en/zh/ja, or a label like Chinese (Mandarin)).' },
       keyword: { type: 'string', description: 'Filter for list: free text over voice name/description/accent/use_case.' },
       source: { type: 'string', enum: ['system', 'custom', 'owned', 'shared'], description: 'Filter for list: MiniMax system/custom; ElevenLabs owned (account) / shared (community).' },
+      search: { type: 'string', description: 'Official /v1/shared-voices filter: free-text search over the ElevenLabs shared voice library (ElevenLabs only; local fallback elsewhere).' },
+      use_case: { type: 'string', description: 'Official filter: use case, e.g. characters_animation / conversational / narration / gaming (ElevenLabs shared library).' },
+      accent: { type: 'string', description: 'Official filter: accent, e.g. british / american / australian.' },
+      gender: { type: 'string', description: 'Official filter: male / female.' },
+      age: { type: 'string', description: 'Official filter: age bracket, e.g. adult / young / middle_aged.' },
+      locale: { type: 'string', description: 'Official filter: language locale, e.g. en-us / en-gb.' },
+      category: { type: 'string', description: 'Official filter: voice category, e.g. animation / voice_actors.' },
+      sort: { type: 'string', enum: ['most_used', 'random', 'oldest', 'newest'], description: 'Official sort for the shared library.' },
+      featured: { type: 'boolean', description: 'Official filter: featured shared voices only (true only).' },
+      free_users_allowed: { type: 'boolean', description: 'Official filter: voices allowed for free users only (true only).' },
+      descriptive: { type: 'boolean', description: 'Official filter: voices with descriptions only (true only).' },
       voice_id: { type: 'string', description: 'Required for delete: the exact voice_id from action=list.' },
       confirm: { type: 'boolean', description: 'Required for delete: must be true; deletion is irreversible.' },
     },
@@ -614,10 +625,25 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       const action = args.action === 'delete' ? 'delete' : 'list'
       if (action === 'list') {
         const source = typeof args.source === 'string' && ['system', 'custom', 'owned', 'shared'].includes(args.source) ? args.source : undefined
+        const pick = (value: unknown): string | undefined => typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+        const serverFilters = {
+          ...(pick(args.search) === undefined ? {} : { search: pick(args.search)! }),
+          ...(pick(args.use_case) === undefined ? {} : { use_case: pick(args.use_case)! }),
+          ...(pick(args.accent) === undefined ? {} : { accent: pick(args.accent)! }),
+          ...(pick(args.gender) === undefined ? {} : { gender: pick(args.gender)! }),
+          ...(pick(args.age) === undefined ? {} : { age: pick(args.age)! }),
+          ...(pick(args.locale) === undefined ? {} : { locale: pick(args.locale)! }),
+          ...(pick(args.category) === undefined ? {} : { category: pick(args.category)! }),
+          ...(typeof args.sort === 'string' && ['most_used', 'random', 'oldest', 'newest'].includes(args.sort) ? { sort: args.sort } : {}),
+          ...(args.featured === true ? { featured: true } : {}),
+          ...(args.free_users_allowed === true ? { free_users_allowed: true } : {}),
+          ...(args.descriptive === true ? { descriptive: true } : {}),
+        }
         const result = await listVendorVoices(channel, {
           ...(typeof args.language === 'string' && args.language.trim() !== '' ? { language: args.language.trim() } : {}),
           ...(typeof args.keyword === 'string' && args.keyword.trim() !== '' ? { keyword: args.keyword.trim() } : {}),
           ...(source === undefined ? {} : { source }),
+          ...(Object.keys(serverFilters).length === 0 ? {} : { serverFilters }),
         })
         return {
           status: 'ok' as const,
