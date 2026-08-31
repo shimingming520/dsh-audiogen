@@ -124,10 +124,10 @@ export function LibraryView(props: {
   const detail = entries.find(entry => entry.id === detailId) ?? null
   /** Voice ID：provenance 优先；旧记录未写入时从 files[].voiceId 兜底。 */
   const drawerVoiceId = detail?.provenance.voiceId ?? detail?.files.find(file => file.voiceId !== undefined)?.voiceId
-  /** 音色设计音频对应的试听文本（存于 provenance.params 快照）。 */
-  const drawerPreviewText = typeof detail?.provenance.params?.['previewText'] === 'string' && (detail.provenance.params['previewText'] as string).trim() !== ''
-    ? (detail.provenance.params['previewText'] as string).trim()
-    : undefined
+  /** 音色设计音频对应的试听文本：provenance.previewText 优先，旧记录从 params 快照兜底。 */
+  const drawerPreviewTextRaw =
+    detail?.provenance.previewText ?? (typeof detail?.provenance.params?.['previewText'] === 'string' ? detail.provenance.params['previewText'] as string : undefined)
+  const drawerPreviewText = typeof drawerPreviewTextRaw === 'string' && drawerPreviewTextRaw.trim() !== '' ? drawerPreviewTextRaw.trim() : undefined
 
   const currentCategoryOptions = useMemo(() => {
     if (typeFilter === 'all') return []

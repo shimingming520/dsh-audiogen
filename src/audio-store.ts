@@ -104,6 +104,7 @@ export async function appendHistory(entry: HistoryEntryInput): Promise<HistoryEn
     prompt: entry.prompt,
     ...(entry.voice === undefined ? {} : { voice: entry.voice }),
     ...(entry.voiceId === undefined ? {} : { voiceId: entry.voiceId }),
+    ...(entry.previewText === undefined ? {} : { previewText: entry.previewText }),
     ...(entry.speed === undefined ? {} : { speed: entry.speed }),
     ...(entry.duration === undefined ? {} : { duration: entry.duration }),
     ...(entry.format === undefined ? {} : { format: entry.format }),

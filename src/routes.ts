@@ -244,6 +244,7 @@ function provenanceOf(request: GenerateAudioRequest, apiUrl: string, voiceId?: s
     ...(request.model === undefined || request.model === '' ? {} : { model: request.model }),
     ...(request.upstream === undefined || request.upstream === '' ? {} : { upstream: request.upstream }),
     ...(request.voice === undefined ? {} : { voice: request.voice }),
+    ...(request.previewText === undefined ? {} : { previewText: request.previewText }),
     ...(voiceId === undefined || voiceId === '' ? {} : { voiceId }),
     params: { ...request },
   }
@@ -293,6 +294,7 @@ async function mergeLibraryProvenance(
     ...((given.upstream ?? (typeof params?.upstream === 'string' ? params.upstream : undefined)) !== undefined
       ? { upstream: given.upstream ?? (typeof params?.upstream === 'string' ? params.upstream : undefined) } : {}),
     ...(given.voice !== undefined || entry?.voice !== undefined ? { voice: given.voice ?? entry?.voice } : {}),
+    ...(given.previewText !== undefined || entry?.previewText !== undefined ? { previewText: given.previewText ?? entry?.previewText } : {}),
     ...(given.voiceId !== undefined || entry?.voiceId !== undefined || audioRef?.voiceId !== undefined
       ? { voiceId: given.voiceId ?? entry?.voiceId ?? audioRef?.voiceId } : {}),
     ...(given.params !== undefined || params !== undefined ? { params: given.params ?? params } : {}),
@@ -487,6 +489,7 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
               model: request.model,
               prompt: request.prompt,
               ...(request.voice === undefined ? {} : { voice: request.voice }),
+              ...(request.previewText === undefined ? {} : { previewText: request.previewText }),
               ...(request.speed === undefined ? {} : { speed: request.speed }),
               ...(request.duration === undefined ? {} : { duration: request.duration }),
               ...(request.format === undefined ? {} : { format: request.format }),
@@ -653,6 +656,7 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {
           ...(strOf(rawProvenance.model) !== undefined ? { model: strOf(rawProvenance.model)! } : {}),
           ...(strOf(rawProvenance.upstream) !== undefined ? { upstream: strOf(rawProvenance.upstream)! } : {}),
           ...(strOf(rawProvenance.voice) !== undefined ? { voice: strOf(rawProvenance.voice)! } : {}),
+          ...(strOf(rawProvenance.previewText) !== undefined ? { previewText: strOf(rawProvenance.previewText)! } : {}),
           ...(strOf(rawProvenance.voiceId) !== undefined ? { voiceId: strOf(rawProvenance.voiceId)! } : {}),
           ...(typeof rawProvenance.params === 'object' && rawProvenance.params !== null
             ? { params: rawProvenance.params as Record<string, unknown> } : {}),

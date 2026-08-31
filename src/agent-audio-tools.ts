@@ -354,6 +354,7 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
               model: picked.alias,
               prompt: request.prompt,
               ...(request.voice === undefined ? {} : { voice: request.voice }),
+              ...(request.previewText === undefined ? {} : { previewText: request.previewText }),
               ...(request.speed === undefined ? {} : { speed: request.speed }),
               ...(request.duration === undefined ? {} : { duration: request.duration }),
               ...(request.format === undefined ? {} : { format: request.format }),
@@ -397,6 +398,7 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
                   model: picked.alias,
                   upstream: picked.upstream,
                   ...(request.voice === undefined ? {} : { voice: request.voice }),
+                  ...(request.previewText === undefined ? {} : { previewText: request.previewText }),
                   params: { ...request },
                 },
               })

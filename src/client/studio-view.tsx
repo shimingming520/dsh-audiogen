@@ -211,6 +211,7 @@ function paramsOfEntry(entry: HistoryEntry): Record<string, unknown> {
     ...(entry.prompt.trim() !== '' ? { prompt: entry.prompt.trim() } : {}),
     ...(entry.model !== '' ? { model: entry.model } : {}),
     ...(entry.voice === undefined ? {} : { voice: entry.voice }),
+    ...(entry.previewText === undefined || entry.previewText.trim() === '' ? {} : { previewText: entry.previewText.trim() }),
     ...(entry.speed === undefined ? {} : { speed: entry.speed }),
     ...(entry.duration === undefined ? {} : { duration: entry.duration }),
     ...(entry.format === undefined ? {} : { format: entry.format }),
@@ -645,6 +646,7 @@ export function StudioView(props: {
     if (cfgValue !== undefined) setCfgScale(String(cfgValue))
     const previewValue = str('previewText')
     if (previewValue !== undefined) setPreviewText(previewValue)
+    else if (modeValue === 'voice_design') setPreviewText('')
     const channelIdValue = str('channelId')
     if (channelIdValue !== undefined && modeValue === 'voice_design') setDesignChannelId(channelIdValue)
     // 恢复对比任务时重建每模型参数覆盖（各模型 params 与第一项的差异）；单条恢复清空覆盖。
@@ -1353,6 +1355,9 @@ export function StudioView(props: {
                 return (
                   <div className={css.historyItem} key={item.key}>
                     <div className={css.historyPrompt}>{entry.prompt}</div>
+                    {entry.mode === 'voice_design' && entry.previewText !== undefined && entry.previewText.trim() !== '' ? (
+                      <div className={css.historyMeta} title="试听文本（恢复时会回填到表单）">试听文本：{entry.previewText}</div>
+                    ) : null}
                     <div className={css.historyMeta}>{modeLabelOf(entry.mode)} · {entry.model}{entry.channel ? ` · ${entry.channel}` : ''}</div>
                     <div className={css.historyTime}>{formatClock(entry.createdAt)}</div>
                     {entry.audio.map((audio, index) => (

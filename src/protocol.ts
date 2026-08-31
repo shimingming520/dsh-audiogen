@@ -268,6 +268,8 @@ export interface HistoryEntry {
   speed?: number
   duration?: number
   format?: string
+  /** 音色设计的试听文本（voice_design）。 */
+  previewText?: string
   audio: HistoryAudioRef[]
   channelId?: string
   channel?: string
@@ -287,6 +289,8 @@ export interface HistoryEntryInput {
   speed?: number
   duration?: number
   format?: string
+  /** 音色设计的试听文本（voice_design）。 */
+  previewText?: string
   audio: GeneratedAudio[]
   channelId?: string
   channel?: string
@@ -327,6 +331,8 @@ export interface LibraryProvenance {
   voice?: string
   /** voiceId returned by the provider (voice_design). */
   voiceId?: string
+  /** 音色设计的试听文本（voice_design）。 */
+  previewText?: string
   /** Full resolved generation-request snapshot (no secrets). */
   params?: Record<string, unknown>
 }
