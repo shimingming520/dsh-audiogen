@@ -96,6 +96,10 @@ export interface SlimVoice {
   age?: string
   use_case?: string
   category?: string
+  /** 厂商返回的完整标签（ElevenLabs labels 原样保留）。 */
+  labels?: Record<string, string>
+  /** ElevenLabs descriptive 标签（如 serious / calm / whispery）。 */
+  descriptive?: string
   description?: string
   preview_url?: string
 }
@@ -419,6 +423,8 @@ function toSlimVoice(voice: VendorVoiceEntry): SlimVoice {
     ...(voice.age === undefined ? {} : { age: voice.age }),
     ...(voice.use_case === undefined ? {} : { use_case: voice.use_case }),
     ...(voice.category === undefined ? {} : { category: voice.category }),
+    ...(voice.labels === undefined ? {} : { labels: voice.labels }),
+    ...(voice.descriptive === undefined ? {} : { descriptive: voice.descriptive }),
     ...(trimmed === undefined ? {} : { description: trimmed }),
     ...(voice.preview_url === undefined ? {} : { preview_url: voice.preview_url }),
   }

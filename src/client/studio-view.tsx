@@ -1367,8 +1367,15 @@ export function StudioView(props: {
                         </div>
                         {voice.reason === '' ? null : <p className={css.recReason}>{voice.reason}</p>}
                         <div className={css.historyMeta}>
-                          ID: {voice.voice_id}{voice.language === undefined ? '' : ` · ${voice.language}`}{voice.accent === undefined ? '' : ` · ${voice.accent}`}{voice.gender === undefined ? '' : ` · ${voice.gender}`}{voice.age === undefined ? '' : ` · ${voice.age}`}
+                          ID: {voice.voice_id}{voice.language === undefined ? '' : ` · ${voice.language}`}{voice.locale === undefined ? '' : ` · ${voice.locale}`}{voice.accent === undefined ? '' : ` · ${voice.accent}`}{voice.gender === undefined ? '' : ` · ${voice.gender}`}{voice.age === undefined ? '' : ` · ${voice.age}`}{voice.use_case === undefined ? '' : ` · ${voice.use_case}`}
                         </div>
+                        {voice.descriptive === undefined && (voice.labels === undefined || Object.keys(voice.labels).length === 0) ? null : (
+                          <div className={css.historyMeta}>
+                            {voice.descriptive !== undefined ? `标签 descriptive: ${voice.descriptive}` : ''}
+                            {voice.labels !== undefined ? Object.entries(voice.labels).filter(([key]) => key !== 'description' && key !== 'descriptive').map(([key, value]) => `${key === 'use_case' ? '用途' : key === 'accent' ? '口音' : key === 'gender' ? '性别' : key === 'age' ? '年龄' : key}: ${value}`).join(' · ') : ''}
+                          </div>
+                        )}
+                        {voice.description === undefined || voice.description === '' ? null : <p className={css.recDescription}>{voice.description}</p>}
                         {voice.preview_url === undefined || voice.preview_url === '' ? null : <AudioPlayer src={voice.preview_url} compact />}
                       </div>
                       <button type="button" className={css.ghostButton} onClick={() => reuseRecommendVoice(voice.voice_id, recommendResult.channelId)}>
@@ -1499,7 +1506,8 @@ export function StudioView(props: {
                             <strong className={css.recVoiceName} title={voice.name}>{voice.name}</strong>
                           </div>
                           {voice.reason === '' ? null : <p className={css.recReason}>{voice.reason}</p>}
-                          <div className={css.historyMeta}>ID: {voice.voice_id}</div>
+                          <div className={css.historyMeta}>ID: {voice.voice_id}{voice.descriptive === undefined ? '' : ` · ${voice.descriptive}`}{voice.accent === undefined ? '' : ` · ${voice.accent}`}{voice.gender === undefined ? '' : ` · ${voice.gender}`}{voice.age === undefined ? '' : ` · ${voice.age}`}</div>
+                          {voice.description === undefined || voice.description === '' ? null : <p className={css.recDescription}>{voice.description.length > 120 ? `${voice.description.slice(0, 119)}…` : voice.description}</p>}
                         </div>
                         <button
                           type="button"

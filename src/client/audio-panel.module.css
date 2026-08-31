@@ -1418,3 +1418,12 @@
   line-height: 1.5;
   color: var(--dsw-accent, #2563eb);
 }
+
+.recDescription {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dsw-alias-fg-l2, #4b5563);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

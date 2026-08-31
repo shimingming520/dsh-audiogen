@@ -29,6 +29,10 @@ export interface VendorVoiceEntry {
   age?: string
   use_case?: string
   category?: string
+  /** 厂商返回的完整标签（ElevenLabs labels 原样保留）。 */
+  labels?: Record<string, string>
+  /** ElevenLabs descriptive 标签（如 serious / calm / whispery）。 */
+  descriptive?: string
   description?: string
   preview_url?: string
   /** Whether deleteVendorVoice would accept this voice (custom/owned only). */
@@ -232,6 +236,13 @@ function normalizeElevenLabs(
   }
   const description = pick('description')
   const name = String(voice.name ?? voiceId).trim() || voiceId
+  // 官方 labels 原样保留（accent/gender/age/use_case/descriptive 及任意自定义键），
+  // 推荐/选角/回看时都能看到厂商对每个音色的说明标签；键值只保留非空字符串。
+  const keptLabels: Record<string, string> = {}
+  for (const [key, value] of Object.entries(labels ?? {})) {
+    if (typeof value === 'string' && value.trim() !== '') keptLabels[key] = value
+  }
+  const descriptive = pick('descriptive')
   return {
     provider: 'elevenlabs',
     voice_id: voiceId,
@@ -244,6 +255,8 @@ function normalizeElevenLabs(
     ...(pick('age') === undefined ? {} : { age: pick('age')! }),
     ...(pick('use_case') === undefined ? {} : { use_case: pick('use_case')! }),
     ...(pick('category') === undefined ? {} : { category: pick('category')! }),
+    ...(Object.keys(keptLabels).length === 0 ? {} : { labels: keptLabels }),
+    ...(descriptive === undefined ? {} : { descriptive }),
     ...(description === undefined ? {} : { description }),
     ...(typeof voice.preview_url === 'string' && voice.preview_url.trim() !== '' ? { preview_url: voice.preview_url.trim() } : {}),
     deletable: source === 'owned',
@@ -506,7 +519,8 @@ function applyFilter(
     }
     if (keyword !== '') {
       const haystack = [entry.name, entry.description ?? '', entry.accent ?? '',
-        entry.use_case ?? '', entry.gender ?? '', entry.age ?? ''].join(' ').toLowerCase()
+        entry.use_case ?? '', entry.gender ?? '', entry.age ?? '', entry.descriptive ?? '',
+        ...Object.values(entry.labels ?? {})].join(' ').toLowerCase()
       for (const token of keyword.split(/\s+/)) {
         if (token !== '' && !haystack.includes(token)) return false
       }

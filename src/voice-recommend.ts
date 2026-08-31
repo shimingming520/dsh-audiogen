@@ -310,6 +310,9 @@ export function buildRecommendMessages(
     age: entry.age ?? null,
     category: entry.category ?? null,
     use_case: entry.use_case ?? null,
+    // 官方详细标签：ElevenLabs descriptive（serious/calm/whispery…）与 labels 全量键值
+    descriptive: entry.descriptive ?? null,
+    labels: entry.labels ?? null,
     description: truncate(entry.description, MAX_DESCRIPTION_CHARS),
     has_preview: entry.preview_url !== undefined && entry.preview_url !== '',
   }))

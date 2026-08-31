@@ -285,6 +285,7 @@ export function VoicesView(props: {
                       <span className={css.rank}>{index + 1}</span>
                       <span className={css.recordVoiceName} title={voice.name}>{voice.name}</span>
                       <span className={css.voiceId} title={voice.voice_id}>ID: {voice.voice_id}</span>
+                      {voice.descriptive === undefined ? null : <span className={css.reasonInline}>descriptive: {voice.descriptive}</span>}
                       {voice.reason === '' ? null : <span className={css.reasonInline}>{voice.reason}</span>}
                       <button type="button" className={css.useBtn} onClick={() => reuseFromRecord(record, voice)}>
                         <MicIcon /> 用此音色生成

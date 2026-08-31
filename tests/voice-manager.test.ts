@@ -404,3 +404,41 @@ test('listVendorVoicesWithFallback：网关无音色库端点时回退为渠道�
   const filtered = await listVendorVoicesWithFallback(gatewayChannel, { keyword: 'Rachel' })
   assert.equal(filtered.voices.length, 1)
 })
+
+test('list ElevenLabs：labels/descriptive 详细标签原样保留', async () => {
+  installFetch([
+    {
+      url: '/voices',
+      body: { voices: [] },
+    },
+    {
+      url: '/shared-voices',
+      body: {
+        voices: [
+          {
+            voice_id: 'abc123',
+            name: 'Gideon',
+            category: 'animation',
+            labels: {
+              accent: 'british', gender: 'male', age: 'middle_aged',
+              use_case: 'characters_animation', descriptive: 'serious',
+              custom_label: 'extra-tag',
+            },
+            description: 'A dramatic Northern character voice with grit.',
+            preview_url: 'https://x/p.mp3',
+          },
+        ],
+        has_more: false,
+      },
+    },
+  ])
+  const result = await listVendorVoices(elevenChannel)
+  const voice = result.voices[0]!
+  assert.equal(voice.descriptive, 'serious')
+  assert.equal(voice.labels?.custom_label, 'extra-tag')
+  assert.equal(voice.labels?.accent, 'british')
+  assert.equal(voice.category, 'animation')
+  // keyword 命中标签（自定义标签也可搜索）
+  const byTag = await listVendorVoices(elevenChannel, { keyword: 'extra-tag' })
+  assert.equal(byTag.voices.length, 1)
+})

@@ -70,10 +70,16 @@ export interface VoiceRecommendRecord {
     source: string
     deletable: boolean
     language?: string
+    locale?: string
     accent?: string
     gender?: string
     age?: string
     use_case?: string
+    category?: string
+    /** 厂商返回的完整标签（ElevenLabs shared-voices labels 原样保留）。 */
+    labels?: Record<string, string>
+    /** ElevenLabs descriptive 标签（如 serious / calm / whispery），选角排序参考。 */
+    descriptive?: string
     description?: string
     preview_url?: string
     reason: string
@@ -95,6 +101,10 @@ export interface VoiceEntry {
   age?: string
   use_case?: string
   category?: string
+  /** 厂商返回的完整标签（ElevenLabs labels 原样保留）。 */
+  labels?: Record<string, string>
+  /** ElevenLabs descriptive 标签（如 serious / calm / whispery）。 */
+  descriptive?: string
   description?: string
   preview_url?: string
 }
