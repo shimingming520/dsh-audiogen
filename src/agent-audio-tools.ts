@@ -11,6 +11,10 @@ import type { AudioChannel } from './audio-engine.ts'
 import { generateAudio, AudioGenError } from './audio-engine.ts'
 import type { GenerationBudget } from './audio-scheduler.ts'
 import { appendHistory, saveAudioFile, saveToLibrary, listLibrary } from './audio-store.ts'
+import {
+  listVendorVoices,
+  deleteVendorVoice,
+} from './voice-manager.ts'
 import type { AudioMode, GenerateAudioRequest, LibraryType } from './protocol.ts'
 
 export interface AgentAudioToolConfig {
@@ -546,8 +550,127 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
       return { status: 'ok' as const, count: entries.length, entries }
     },
   }))
+
+  /** 厂商音色管理：浏览/筛选 + 删除（仅自建）。删除不可逆，必须 confirm=true。 */
+  const managementDisposer = ctx.tools.register(defineTool({
+    name: 'manage_audio_voices',
+    description: 'Manage vendor voice libraries (MiniMax / ElevenLabs). action=list: browse available TTS voices of a channel — official/shared voices plus voices designed/cloned by the account, with language/keyword/source filtering; returns voice_id/name/source/description/preview_url and whether each voice is deletable. action=delete: delete one OWNED voice (custom/owned only; official/shared/system voices are read-only and refused) — irreversible, so confirm must be true (pass the exact voice_id from action=list). Use the returned voice_id with generate_audio (mode=tts, voice=<voice_id>) to speak with the selected voice.',
+    parameters: {
+      action: { type: 'string', enum: ['list', 'delete'], required: true, description: 'list = browse/filter voices; delete = remove an owned voice.' },
+      channel: { type: 'string', description: 'Channel name or id (e.g. the channel shown in settings). Defaults to the default channel; required when more than one channel is configured.' },
+      language: { type: 'string', description: 'Filter for list: language substring (ISO code like en/zh/ja, or a label like Chinese (Mandarin)).' },
+      keyword: { type: 'string', description: 'Filter for list: free text over voice name/description/accent/use_case.' },
+      source: { type: 'string', enum: ['system', 'custom', 'owned', 'shared'], description: 'Filter for list: MiniMax system/custom; ElevenLabs owned (account) / shared (community).' },
+      voice_id: { type: 'string', description: 'Required for delete: the exact voice_id from action=list.' },
+      confirm: { type: 'boolean', description: 'Required for delete: must be true; deletion is irreversible.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          status: { type: 'string', required: true, enum: ['ok'] },
+          kind: { type: 'string', required: true, enum: ['list', 'delete'] },
+          vendor: { type: 'string', required: true },
+          channel: { type: 'string', required: true },
+          count: { type: 'integer' },
+          truncated: { type: 'boolean' },
+          voices: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                voice_id: { type: 'string', required: true },
+                name: { type: 'string', required: true },
+                source: { type: 'string', required: true },
+                deletable: { type: 'boolean', required: true },
+                language: { type: 'string' },
+                accent: { type: 'string' },
+                gender: { type: 'string' },
+                age: { type: 'string' },
+                use_case: { type: 'string' },
+                description: { type: 'string' },
+                preview_url: { type: 'string' },
+              },
+            },
+          },
+          voice_id: { type: 'string' },
+          deleted: { type: 'boolean' },
+          message: { type: 'string' },
+          note: { type: 'string' },
+        },
+      } as const,
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+    },
+    timeoutMs: 120_000,
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      const config = resolve()
+      if (!config.enabled) {
+        throw new AudioGenError('AI audio is disabled. Open Settings > Plugins > AI Audio and enable it.', 'plugin-disabled')
+      }
+      const channel = resolveVoiceManagementChannel(config, args.channel)
+      const action = args.action === 'delete' ? 'delete' : 'list'
+      if (action === 'list') {
+        const source = typeof args.source === 'string' && ['system', 'custom', 'owned', 'shared'].includes(args.source) ? args.source : undefined
+        const result = await listVendorVoices(channel, {
+          ...(typeof args.language === 'string' && args.language.trim() !== '' ? { language: args.language.trim() } : {}),
+          ...(typeof args.keyword === 'string' && args.keyword.trim() !== '' ? { keyword: args.keyword.trim() } : {}),
+          ...(source === undefined ? {} : { source }),
+        })
+        return {
+          status: 'ok' as const,
+          kind: 'list' as const,
+          vendor: result.vendor,
+          channel: channel.name,
+          count: result.voices.length,
+          ...(result.truncated ? { truncated: true } : {}),
+          voices: result.voices,
+          ...(result.note === undefined ? {} : { note: result.note }),
+        }
+      }
+      const voiceId = typeof args.voice_id === 'string' ? args.voice_id.trim() : ''
+      if (voiceId === '') throw new AudioGenError('delete requires voice_id (the exact voice_id from action=list).', 'voice-id-required')
+      if (args.confirm !== true) throw new AudioGenError('Deletion is irreversible: pass confirm=true after verifying the voice_id.', 'voice-delete-requires-confirm')
+      const deleted = await deleteVendorVoice(channel, voiceId)
+      return {
+        status: 'ok' as const,
+        kind: 'delete' as const,
+        vendor: deleted.vendor,
+        channel: channel.name,
+        voice_id: deleted.voice_id,
+        deleted: true,
+        message: `已删除音色 ${deleted.voice_id}（${channel.name}）`,
+      }
+    },
+  }))
+
   return () => {
     disposer()
     searchDisposer()
+    managementDisposer()
   }
+}
+
+/** 解析工具目标渠道：默认渠道 > 唯一可用渠道；多渠道未指定时要求显式选择。 */
+function resolveVoiceManagementChannel(config: AgentAudioToolConfig, requested: unknown): AudioChannel {
+  const usable = config.channels.filter(channel => channel.apiUrl.trim() !== '' && channel.apiKey.trim() !== '')
+  if (usable.length === 0) {
+    throw new AudioGenError('Audio API credentials are not configured. Open Settings > Plugins > AI Audio, add a channel and fill its API URL and API key.', 'audio-api-not-configured')
+  }
+  const wanted = typeof requested === 'string' ? requested.trim() : ''
+  if (wanted === '') {
+    if (usable.length === 1) return usable[0]!
+    const target = usable.find(channel => channel.id === config.defaultChannelId)
+    if (target !== undefined) return target
+    const options = usable.map(channel => `"${channel.name}"`).join(', ')
+    throw new AudioGenError(`Multiple audio channels are configured — specify the channel (one of: ${options}).`, 'channel-choice-required')
+  }
+  const direct = usable.find(channel => channel.name === wanted || channel.id === wanted)
+  if (direct !== undefined) return direct
+  const partial = usable.filter(channel => channel.name.toLowerCase().includes(wanted.toLowerCase()))
+  if (partial.length === 1) return partial[0]!
+  const options = usable.map(channel => channel.name).join(', ')
+  throw new AudioGenError(`Audio channel "${wanted}" is not configured. Choose one of: ${options}.`, 'channel-not-configured')
 }
