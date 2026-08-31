@@ -18,6 +18,7 @@ import {
   type VendorVoiceEntry,
 } from './voice-manager.ts'
 import type { VoiceRecommendation } from './voice-recommend.ts'
+import { appendVoiceRecommendRecord } from './voice-recommend.ts'
 import {
   parseCharacterProfiles,
   prepareVoiceCast,
@@ -843,6 +844,36 @@ export function registerAgentAudioTools(ctx: Context, resolve: () => AgentAudioT
             : 5
           if (config.recommend === undefined) throw new AudioGenError('Voice recommendation is unavailable (LLM service not wired).', 'recommend-unavailable')
           const recommendations = await config.recommend(requirement, result.voices, topK)
+          // 与面板共用同一份推荐记录（最近 50 条，失败不影响结果）。
+          void appendVoiceRecommendRecord({
+            channel: channel.name,
+            vendor: result.vendor,
+            requirement,
+            candidate_count: result.voices.length,
+            top_k: topK,
+            channel_id: channel.id,
+            filters: {
+              ...(typeof args.language === 'string' && args.language.trim() !== '' ? { language: args.language.trim() } : {}),
+              ...(typeof args.keyword === 'string' && args.keyword.trim() !== '' ? { keyword: args.keyword.trim() } : {}),
+              ...(source === undefined ? {} : { source }),
+              ...(typeof args.use_case === 'string' && args.use_case.trim() !== '' ? { use_case: args.use_case.trim() } : {}),
+              ...(typeof args.accent === 'string' && args.accent.trim() !== '' ? { accent: args.accent.trim() } : {}),
+            },
+            recommendations: recommendations.map(item => ({
+              voice_id: item.voice_id,
+              name: item.name,
+              source: item.source,
+              deletable: item.deletable,
+              ...(item.language === undefined ? {} : { language: item.language }),
+              ...(item.accent === undefined ? {} : { accent: item.accent }),
+              ...(item.gender === undefined ? {} : { gender: item.gender }),
+              ...(item.age === undefined ? {} : { age: item.age }),
+              ...(item.use_case === undefined ? {} : { use_case: item.use_case }),
+              ...(item.description === undefined ? {} : { description: item.description }),
+              ...(item.preview_url === undefined ? {} : { preview_url: item.preview_url }),
+              reason: item.reason,
+            })),
+          }).catch(() => { /* best-effort */ })
           return {
             status: 'ok' as const,
             kind: 'recommend' as const,

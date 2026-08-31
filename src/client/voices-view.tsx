@@ -12,10 +12,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AudiogenApi } from './api.ts'
 import type { AudiogenScope } from './settings-scope.ts'
-import type { VoiceEntry, VoiceRecommendation } from '../protocol.ts'
+import type { VoiceEntry, VoiceRecommendation, VoiceRecommendRecord } from '../protocol.ts'
 import { tt } from './helpers.ts'
 import { AudioPlayer } from './audio-player.tsx'
-import { MicIcon, SearchIcon, TrashIcon, CheckIcon, SparkIcon } from './icons.tsx'
+import { MicIcon, SearchIcon, TrashIcon, CheckIcon, SparkIcon, ListIcon } from './icons.tsx'
 import css from './voices.module.css'
 
 export interface VoicesReusePayload {
@@ -107,6 +107,26 @@ export function VoicesView(props: {
   const [recommendations, setRecommendations] = useState<VoiceRecommendation[] | null>(null)
   const [recommendCandidateCount, setRecommendCandidateCount] = useState<number | null>(null)
 
+  // AI 推荐记录（每次推荐自动落盘，最多保留 50 条；关闭面板后仍可回看）
+  const [records, setRecords] = useState<VoiceRecommendRecord[]>([])
+  const [recordsOpen, setRecordsOpen] = useState(false)
+
+  const loadRecords = async (): Promise<void> => {
+    try {
+      const response = await api.voiceRecommendHistory(30)
+      setRecords(response.entries ?? [])
+    } catch {
+      // best-effort：记录加载失败不打扰主流程
+    }
+  }
+
+  const removeRecord = async (id: string): Promise<void> => {
+    await api.voiceRecommendHistoryRemove(id).catch(() => { /* best-effort */ })
+    void loadRecords()
+  }
+
+  useEffect(() => { void loadRecords() }, [api])
+
   /** 当前的筛选载荷（查询与 AI 推荐共用：推荐先在筛选后的候选池里选）。 */
   const currentFilterPayload = (): Record<string, unknown> => ({
     channel: channelId,
@@ -188,6 +208,20 @@ export function VoicesView(props: {
     })
   }
 
+  /** 从推荐记录里复用音色：切到记录对应的渠道，再回填 TTS 表单。 */
+  const reuseFromRecord = (record: VoiceRecommendRecord, voice: { voice_id: string }): void => {
+    if (record.channel_id !== undefined && record.channel_id !== '' && channels.some(item => item.id === record.channel_id)) {
+      setChannelId(record.channel_id)
+    }
+    const channel = channels.find(item => item.id === (record.channel_id ?? channelId))
+    const ttsModel = channel?.models.find(model => model.category === 'tts' || /tts|speech|voice|t2a/i.test(model.alias))
+    onReuseVoice({
+      mode: 'tts',
+      voiceId: voice.voice_id,
+      ...(ttsModel === undefined || ttsModel.alias === '' ? {} : { model: ttsModel.alias }),
+    })
+  }
+
   const recommend = async (): Promise<void> => {
     const text = requirement.trim()
     if (text === '') {
@@ -208,6 +242,9 @@ export function VoicesView(props: {
         setRecommendations(response.recommendations ?? [])
         setRecommendCandidateCount(response.candidate_count ?? null)
         setNote(response.note ?? null)
+        setRecordsOpen(true)
+        showToast('推荐完成，已记录到「最近 AI 推荐」')
+        void loadRecords()
       } else {
         setRecommendError(response.message ?? '音色推荐失败')
       }
@@ -329,6 +366,52 @@ export function VoicesView(props: {
           </div>
         ) : null}
       </div>
+
+      {records.length > 0 ? (
+        <details
+          className={css.recordBox}
+          open={recordsOpen}
+          onToggle={(event) => setRecordsOpen((event.target as HTMLDetailsElement).open)}
+        >
+          <summary className={css.recordSummary}>
+            <ListIcon /> 最近 AI 推荐（{records.length}）
+            <span className={css.recordHint}>每次推荐自动记录，点「用此音色生成」可直接回填 TTS 表单</span>
+          </summary>
+          <div className={css.recordList}>
+            {records.map(record => (
+              <div className={`${css.card} ${css.recordCard}`} key={record.id}>
+                <div className={css.cardHead}>
+                  <span className={css.voiceName} title={record.requirement}>{record.requirement}</span>
+                  <span className={css.badge} data-source={record.vendor}>{record.channel}</span>
+                </div>
+                <div className={css.meta}>
+                  <span>{new Date(record.createdAt).toLocaleString()}</span>
+                  <span>候选池 {record.candidate_count}</span>
+                  <span>推荐 {record.recommendations.length} 条</span>
+                </div>
+                <div className={css.recordVoices}>
+                  {record.recommendations.map((voice, index) => (
+                    <div className={css.recordVoiceRow} key={`${record.id}:${voice.voice_id}`}>
+                      <span className={css.rank}>{index + 1}</span>
+                      <span className={css.recordVoiceName} title={voice.name}>{voice.name}</span>
+                      <span className={css.voiceId} title={voice.voice_id}>ID: {voice.voice_id}</span>
+                      {voice.reason === '' ? null : <span className={css.reasonInline}>{voice.reason}</span>}
+                      <button type="button" className={css.useBtn} onClick={() => reuseFromRecord(record, voice)}>
+                        <MicIcon /> 用此音色生成
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className={css.actions}>
+                  <button type="button" className={css.deleteBtn} onClick={() => void removeRecord(record.id)}>
+                    <TrashIcon /> 删除记录
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
 
       <details className={css.advanced}>
         <summary className={css.advancedSummary}>官方共享库筛选（ElevenLabs /v1/shared-voices，其它渠道无效）</summary>

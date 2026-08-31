@@ -43,7 +43,42 @@ export const VOICES_API = {
   list: '/api/dsh-audiogen/voices/list',
   delete: '/api/dsh-audiogen/voices/delete',
   recommend: '/api/dsh-audiogen/voices/recommend',
+  recommendHistory: {
+    list: '/api/dsh-audiogen/voices/recommend-history/list',
+    remove: '/api/dsh-audiogen/voices/recommend-history/remove',
+  },
 } as const
+
+/** 一条已记录的 AI 音色推荐结果（面板与 Agent 共用同一存储）。 */
+export interface VoiceRecommendRecord {
+  id: string
+  createdAt: number
+  /** 渠道展示名（如 MiniMax / ElevenLabs）。 */
+  channel: string
+  /** 渠道 id（「用此音色生成」时切换目标渠道用）。 */
+  channel_id?: string
+  vendor: string
+  requirement: string
+  /** 候选池大小（推荐时）。 */
+  candidate_count: number
+  top_k: number
+  /** 推荐时使用的筛选条件（language/keyword/use_case/accent… 快照）。 */
+  filters?: Record<string, string | boolean>
+  recommendations: Array<{
+    voice_id: string
+    name: string
+    source: string
+    deletable: boolean
+    language?: string
+    accent?: string
+    gender?: string
+    age?: string
+    use_case?: string
+    description?: string
+    preview_url?: string
+    reason: string
+  }>
+}
 
 /** One normalized vendor voice entry (see voice-manager). */
 export interface VoiceEntry {

@@ -8,7 +8,7 @@ import {
   type GenerateAudioRequest, type GeneratedAudio, type HistoryEntry,
   type LibraryEntry, type LibrarySaveRequest, type LibraryUpdateRequest,
   type VoiceEntry, type VoicesListRequest, type VoicesDeleteRequest,
-  type VoicesRecommendRequest, type VoiceRecommendation,
+  type VoicesRecommendRequest, type VoiceRecommendation, type VoiceRecommendRecord,
 } from '../protocol.ts'
 
 export interface GenerateResponse {
@@ -126,6 +126,20 @@ export class AudiogenApi {
       ...(body.code === undefined ? {} : { code: body.code }),
       ...(body.message === undefined ? {} : { message: body.message }),
     }
+  }
+
+  /** 读取最近 N 条 AI 音色推荐记录（面板与 Agent 共用）。 */
+  async voiceRecommendHistory(limit = 20): Promise<{ ok: boolean; entries?: VoiceRecommendRecord[]; message?: string }> {
+    const response = await postJson(VOICES_API.recommendHistory.list, { limit })
+    const body = await response.json() as { ok?: boolean; entries?: VoiceRecommendRecord[]; message?: string }
+    return { ok: body.ok === true, ...(body.entries === undefined ? {} : { entries: body.entries }), ...(body.message === undefined ? {} : { message: body.message }) }
+  }
+
+  /** 删除一条 AI 音色推荐记录。 */
+  async voiceRecommendHistoryRemove(id: string): Promise<{ ok: boolean; message?: string }> {
+    const response = await postJson(VOICES_API.recommendHistory.remove, { id })
+    const body = await response.json() as { ok?: boolean; message?: string }
+    return { ok: body.ok === true, ...(body.message === undefined ? {} : { message: body.message }) }
   }
 
   /** 删除厂商音色（不可逆；confirm=true 必须）。 */

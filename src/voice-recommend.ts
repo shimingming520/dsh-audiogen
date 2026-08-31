@@ -8,6 +8,75 @@
 
 import type { VendorVoiceEntry } from './voice-manager.ts'
 import { AudioGenError } from './audio-engine.ts'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import os from 'node:os'
+import type { VoiceRecommendRecord } from './protocol.ts'
+
+/** 推荐记录上限（超出最旧淘汰，新记录永远插在最前）。 */
+const RECORD_LIMIT = 50
+
+// -------------------------------------------------------------- record store
+
+function recommendStorePath(): string {
+  return path.join(process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh'), 'dsh-audiogen', 'voice-recommends.json')
+}
+
+interface RecommendStore {
+  version: number
+  updatedAt: string
+  entries: VoiceRecommendRecord[]
+}
+
+async function loadRecommendStore(): Promise<RecommendStore> {
+  try {
+    const text = await readFile(recommendStorePath(), 'utf-8')
+    const payload = JSON.parse(text) as Partial<RecommendStore> | undefined
+    if (typeof payload === 'object' && payload !== null && Array.isArray(payload.entries)) {
+      return { version: 1, updatedAt: String(payload.updatedAt ?? ''), entries: payload.entries }
+    }
+  } catch {
+    // 文件缺失或损坏：重建空存储。
+  }
+  return { version: 1, updatedAt: new Date().toISOString(), entries: [] }
+}
+
+/** 追加一条 AI 推荐记录（最好努力：失败不阻断推荐结果返回）。 */
+export async function appendVoiceRecommendRecord(record: Omit<VoiceRecommendRecord, 'id' | 'createdAt'>): Promise<VoiceRecommendRecord> {
+  const stored: VoiceRecommendRecord = {
+    id: randomUUID(),
+    createdAt: Date.now(),
+    ...record,
+  }
+  try {
+    const store = await loadRecommendStore()
+    store.entries = [stored, ...store.entries.filter(entry => entry.id !== stored.id)].slice(0, RECORD_LIMIT)
+    store.updatedAt = new Date().toISOString()
+    const file = recommendStorePath()
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, JSON.stringify(store, null, 2) + '\n', 'utf-8')
+  } catch {
+    // best-effort
+  }
+  return stored
+}
+
+/** 读取最近 N 条 AI 推荐记录（新→旧）。 */
+export async function listVoiceRecommendRecords(limit = 20): Promise<VoiceRecommendRecord[]> {
+  const store = await loadRecommendStore()
+  return store.entries.slice(0, Math.max(1, Math.min(50, Math.floor(limit))))
+}
+
+/** 删除一条 AI 推荐记录（不存在的 id 幂等成功）。 */
+export async function removeVoiceRecommendRecord(id: string): Promise<void> {
+  const store = await loadRecommendStore()
+  const next = store.entries.filter(entry => entry.id !== id)
+  if (next.length === store.entries.length) return
+  const file = recommendStorePath()
+  await mkdir(path.dirname(file), { recursive: true })
+  await writeFile(file, JSON.stringify({ ...store, entries: next, updatedAt: new Date().toISOString() }, null, 2) + '\n', 'utf-8')
+}
 
 /** 单条推荐：候选条目字段 + LLM 给出的理由。 */
 export type VoiceRecommendation = VendorVoiceEntry & { reason: string }

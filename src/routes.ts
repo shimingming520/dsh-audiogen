@@ -13,6 +13,7 @@ import { SettingsConflictError, settingsNamespace, type SettingsDescriptor } fro
 import { generateAudio, AudioGenError, type AudioChannel } from './audio-engine.ts'
 import { listVendorVoices, deleteVendorVoice, type ListVoicesOptions, type VendorVoiceEntry } from './voice-manager.ts'
 import { recommendVoices, type VoiceRecommendation } from './voice-recommend.ts'
+import { appendVoiceRecommendRecord, listVoiceRecommendRecords, removeVoiceRecommendRecord } from './voice-recommend.ts'
 import type { GenerationBudget } from './audio-scheduler.ts'
 import { discoverAudioModels } from './audio-models.ts'
 import { AUDIO_PRESETS } from './audio-presets.ts'
@@ -333,6 +334,22 @@ function voiceListOptionsOf(body: Record<string, unknown> | undefined): ListVoic
   }
 }
 
+/** 推荐记录的筛选条件快照（面板展示用，不含密钥）。 */
+function recommendFiltersOf(body: Record<string, unknown> | undefined): Record<string, string | boolean> {
+  const str = (key: string): string | undefined => {
+    const value = body?.[key]
+    return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+  }
+  const out: Record<string, string | boolean> = {}
+  for (const key of ['language', 'keyword', 'source', 'search', 'use_case', 'accent', 'gender', 'age', 'locale', 'category', 'sort'] as const) {
+    const value = str(key)
+    if (value !== undefined) out[key] = value
+  }
+  if (body?.featured === true) out.featured = true
+  if (body?.free_users_allowed === true) out.free_users_allowed = true
+  return out
+}
+
 /** Build every /api/dsh-audiogen route. */
 export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {  const guard = (req: IncomingMessage, res: ServerResponse, method: string): boolean => {
     if (!isLoopbackRequest(req)) {
@@ -506,6 +523,30 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {  const guard 
             limit: 500,
           })
           const recommendations = await deps.recommend(requirement, result.voices, topK)
+          // 记录本次推荐（最近 50 条，先记录后返回；失败不影响结果）。
+          void appendVoiceRecommendRecord({
+            channel: channel.name,
+            vendor: result.vendor,
+            requirement,
+            candidate_count: result.voices.length,
+            top_k: topK,
+            channel_id: channel.id,
+            filters: recommendFiltersOf(body),
+            recommendations: recommendations.map(item => ({
+              voice_id: item.voice_id,
+              name: item.name,
+              source: item.source,
+              deletable: item.deletable,
+              ...(item.language === undefined ? {} : { language: item.language }),
+              ...(item.accent === undefined ? {} : { accent: item.accent }),
+              ...(item.gender === undefined ? {} : { gender: item.gender }),
+              ...(item.age === undefined ? {} : { age: item.age }),
+              ...(item.use_case === undefined ? {} : { use_case: item.use_case }),
+              ...(item.description === undefined ? {} : { description: item.description }),
+              ...(item.preview_url === undefined ? {} : { preview_url: item.preview_url }),
+              reason: item.reason,
+            })),
+          }).catch(() => { /* best-effort */ })
           writeJson(res, 200, {
             ok: true,
             vendor: result.vendor,
@@ -514,10 +555,45 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {  const guard 
             candidate_count: result.voices.length,
             top_k: topK,
             recommendations,
+            recorded: true,
             ...(result.note === undefined ? {} : { note: result.note }),
           })
         } catch (error) {
           writeJson(res, 200, { ok: false, code: 'voice-recommend-failed', message: messageOf(error) })
+        }
+      },
+    },
+    // ------------------------------------------ voice recommend history (records)
+    {
+      kind: 'exact',
+      path: VOICES_API.recommendHistory.list,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req) as Record<string, unknown> | undefined
+        const rawLimit = body?.limit
+        const limit = typeof rawLimit === 'number' && Number.isFinite(rawLimit)
+          ? Math.max(1, Math.min(50, Math.floor(rawLimit)))
+          : 20
+        const entries = await listVoiceRecommendRecords(limit)
+        writeJson(res, 200, { ok: true, count: entries.length, entries })
+      },
+    },
+    {
+      kind: 'exact',
+      path: VOICES_API.recommendHistory.remove,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        const body = await readJsonBody(req) as Record<string, unknown> | undefined
+        const id = typeof body?.id === 'string' ? body.id.trim() : ''
+        if (id === '') {
+          writeJson(res, 200, { ok: false, code: 'record-id-required', message: 'record id 不能为空。' })
+          return
+        }
+        try {
+          await removeVoiceRecommendRecord(id)
+          writeJson(res, 200, { ok: true, removed: id })
+        } catch (error) {
+          writeJson(res, 200, { ok: false, code: 'record-remove-failed', message: messageOf(error) })
         }
       },
     },

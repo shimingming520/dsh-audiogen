@@ -233,8 +233,10 @@ export function StudioView(props: {
   reuse?: StudioReuse | null
   onLibraryChanged: () => void
   showToast: (text: string) => void
+  /** 左侧模式栏的「音色」入口：切换到音色管理（浏览/推荐/记录）。 */
+  onOpenVoices?: () => void
 }): React.JSX.Element {
-  const { api, scope, config, reuse } = props
+  const { api, scope, config, reuse, onOpenVoices } = props
   const effectiveConfig = useConfig(scope)
   const cfg = (config ?? effectiveConfig)
   const enabled = cfg?.enabled ?? true
@@ -1031,6 +1033,18 @@ export function StudioView(props: {
               {modeLabelOf(item)}
             </button>
           ))}
+          {onOpenVoices === undefined ? null : (
+            <button
+              type="button"
+              className={css.modeButton}
+              data-active="false"
+              onClick={() => onOpenVoices()}
+              title="浏览/筛选厂商音色、AI 推荐音色（结果自动记录）"
+            >
+              <span className={css.modeIcon}>🎤</span>
+              音色
+            </button>
+          )}
         </div>
 
         <p className={css.formSection}>输入</p>

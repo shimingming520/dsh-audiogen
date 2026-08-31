@@ -173,3 +173,40 @@ test('recommendVoices 空需求/空候选直接报错', async () => {
     (error: Error) => error.message.includes('候选音色池为空'),
   )
 })
+
+// ------------------------------------------------ 推荐记录存储（temp DSH_HOME）
+
+test('AI 推荐记录：追加 / 列表（新→旧）/ 删除 / 上限', async () => {
+  const { mkdtemp, rm } = await import('node:fs/promises')
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'dsh-rec-'))
+  const previous = process.env.DSH_HOME
+  process.env.DSH_HOME = dir
+  const mod = await import('../src/voice-recommend.ts')
+  try {
+    const base = { channel: 'MiniMax', channel_id: 'minimax-1', vendor: 'minimax', requirement: '清亮少女音', candidate_count: 373, top_k: 5 }
+    await mod.appendVoiceRecommendRecord({ ...base, requirement: '第一次推荐' })
+    await mod.appendVoiceRecommendRecord({ ...base, requirement: '第二次推荐', recommendations: [{ voice_id: 'v1', name: '音色一', source: 'system', deletable: false, reason: '理由' }] })
+
+    let entries = await mod.listVoiceRecommendRecords()
+    assert.equal(entries.length, 2)
+    // 新记录插在最前
+    assert.equal(entries[0]!.requirement, '第二次推荐')
+    assert.equal(entries[0]!.recommendations[0]!.voice_id, 'v1')
+    assert.equal(entries[0]!.channel_id, 'minimax-1')
+
+    await mod.removeVoiceRecommendRecord(entries[1]!.id)
+    entries = await mod.listVoiceRecommendRecords()
+    assert.equal(entries.length, 1)
+    assert.equal(entries[0]!.requirement, '第二次推荐')
+
+    // 删除不存在的 id：幂等
+    await mod.removeVoiceRecommendRecord('no-such-id')
+    assert.equal((await mod.listVoiceRecommendRecords()).length, 1)
+  } finally {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    await rm(dir, { recursive: true, force: true })
+  }
+})
