@@ -1159,16 +1159,49 @@
 .formFields {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  align-items: end;
+  gap: 10px 12px;
+  align-items: start;
 }
 
 .fieldCell {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .fieldFull {
   grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 字段说明小字：控件下方可见（不再只靠悬浮提示） */
+.fieldHint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--dsw-alias-label-tertiary, #9ca3af);
+}
+
+/* 复选框字段（纯音乐 / 字幕 / 循环）：开关行 + 说明小字垂直排布，与相邻输入框对齐 */
+.fieldCheck {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fieldCheck .checkbox {
+  min-height: 36px;
+}
+
+/* 勾选纯音乐后禁用的歌词框 */
+.textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: var(--dsw-alias-bg-layer-2, #f3f4f6);
 }
 
 /* 模式胶囊 */

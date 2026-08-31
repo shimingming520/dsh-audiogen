@@ -557,7 +557,7 @@ async function minimax(channel: AudioChannel, request: GenerateAudioRequest, sig
     const lyrics = request.lyrics?.trim() ?? ''
     if (lyrics === '' && request.isInstrumental !== true) {
       throw new AudioGenError(
-        'MiniMax 音乐生成需要歌词（lyrics 参数），或在「纯音乐」模式（is_instrumental=true）下生成；也可让面板/Agent 先为提示词创作一段歌词。',
+        'MiniMax 音乐生成需要填写歌词，或在面板中勾选「纯音乐（无歌词/人声）」后生成；也可以让面板/Agent 先为提示词创作一段歌词。',
         'lyrics-required',
       )
     }
