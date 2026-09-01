@@ -8,11 +8,10 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { existsSync, mkdirSync, readdirSync, copyFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import z from 'schemastery'
+import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -33,8 +32,8 @@ export const name = 'audiogen'
 /** Services required before the surfaces can mount. */
 export const inject = ['webServer', 'systemPrompt']
 
-/** The branded settings namespace of this plugin. */
-export const AudioGenSettingsNamespace = settingsNamespace(AUDIOGEN_SETTINGS_NAMESPACE)
+/** The settings namespace of this plugin. */
+export const AudioGenSettingsNamespace = AUDIOGEN_SETTINGS_NAMESPACE
 
 export interface Config {
   enabled?: boolean
@@ -323,12 +322,14 @@ export function apply(ctx: Context, config?: Config): void {
     })
   }
 
-  installSettingsSection(ctx, AudioGenSettingsNamespace, Config, config ?? {}, {
-    setSource: (source) => {
-      current = source
-      sync()
-    },
-    onChange: sync,
+  ctx.inject(['settings'], (settingsCtx) => {
+    settingsCtx.settings.installSection(ctx, AudioGenSettingsNamespace, Config, config ?? {}, {
+      setSource: (source) => {
+        current = source
+        sync()
+      },
+      onChange: sync,
+    })
   })
 
   sync()

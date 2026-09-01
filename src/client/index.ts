@@ -5,9 +5,10 @@
  * 音频), and mounts the sidebar entry + generation panel. DOM mounting
  * failures are logged, never thrown.
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { AudiogenApi } from './api.ts'
 import { AudioGenController } from './controller.ts'
@@ -25,25 +26,6 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
     'dsh-audiogen': AudioGenKey
   }
-
-  interface SlotMap {
-    'settings.plugin.item': { kind: 'keyed'; scope: 'root'; owner: AudioGenPluginItemOwnerProps }
-    'tool.call.toolview': { kind: 'keyed'; scope: 'session'; owner: AudioToolViewOwnerProps }
-  }
-}
-
-export interface AudioGenPluginItemOwnerProps {
-  children?: never
-}
-
-export type AudioToolViewOwnerProps = {
-  callId: string
-  toolName: string
-  block: unknown
-  cwd?: string
-  home?: string
-  openFile: (path: string) => void
-  inspect?: () => void
 }
 
 export const inject = ['slots', 'locale', 'connection', 'sessions']

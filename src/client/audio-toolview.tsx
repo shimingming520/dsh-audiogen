@@ -5,29 +5,20 @@
  * URLs; this view turns it into a small audio-player card.
  */
 
-import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { useEffect, useMemo, useState } from 'react'
 import css from './audio-toolview.module.css'
 
-export interface AudioToolViewOwnerProps {
-  callId: string
-  toolName: string
-  block: unknown
-  cwd?: string
-  home?: string
-  openFile: (path: string) => void
-  inspect?: () => void
-}
+/** Full props the atomic tool-view contract gives a keyed row renderer. */
+export type AudioToolViewProps = ToolCallViewProps
 
 interface AudioFileRef {
   id?: string
   url: string
   mime: string
   bytes: number
-}
-
-interface AudioToolViewProps extends AudioToolViewOwnerProps {
-  sessionId: SessionId
 }
 
 function isSettled(block: unknown): block is { content?: Array<{ type: string; text?: string }>; isError?: boolean } {

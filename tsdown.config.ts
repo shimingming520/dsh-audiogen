@@ -21,17 +21,14 @@ const ID = 'dsh-audiogen'
 
 /**
  * The module specifiers the web shell shares into the frozen module table
- * (mirror of @deepseek-ai/dsh-client-web PLATFORM_MODULES) plus the runtime
- * store exemption. Anything else is inlined by the bundle.
+ * (mirror of @deepseek-ai/dsh-client-web PLATFORM_MODULES). Anything else is
+ * inlined by the bundle.
  */
 const CLIENT_EXTERNALS: readonly string[] = [
   'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client', '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-attachment',
-  '@deepseek-ai/dsh-client-schema-form',
-  '@deepseek-ai/dsh-client-runtime/client',
 ]
 
 /** Virtual-id wrapper keeping module CSS away from tsdown's own css pipeline. */
@@ -59,7 +56,7 @@ const nodeConfig: UserConfig = {
       '@deepseek-ai/dsh-attachment',
       '@deepseek-ai/dsh-llm',
       '@deepseek-ai/dsh-llm/message',
-      'schemastery',
+      '@deepseek-ai/schemastery',
     ],
   },
 }

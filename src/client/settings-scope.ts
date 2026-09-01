@@ -8,12 +8,8 @@
  * uses, self-contained per plugin.
  */
 
-import {
-  createSnapshotStore,
-  type SettingsScope,
-  type SettingsScopeSnapshot,
-  type SnapshotStore,
-} from '@deepseek-ai/dsh-client-runtime/client'
+import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { SettingsScope, SettingsScopeSnapshot } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { SETTINGS_API, type AudioModelCategory, type ChannelConfig } from '../protocol.ts'
 
 /** The fields this plugin's settings card edits. */
@@ -156,6 +152,11 @@ class BridgeScopeController<T> implements SettingsScope<T> {
     return this.enqueue(() => this.writeOps([{ op: 'unset', path: [field] }]))
   }
 
+  /** Official SettingsScope mutation entry: several path ops in one revision-fenced mutate call. */
+  mutate(ops: readonly SettingsOp[], expectedRevision?: number): Promise<void> {
+    return this.enqueue(() => this.writeOps(ops, expectedRevision))
+  }
+
   /** Apply several path ops in one revision-fenced mutate call (atomic save).
    *  Path ops may address plain-object fields (e.g. `channelSecrets.<id>`),
    *  but never navigate *inside* arrays — write array fields wholesale. */
@@ -204,13 +205,13 @@ class BridgeScopeController<T> implements SettingsScope<T> {
     this.accept(view, writable)
   }
 
-  private async writeOps(ops: SettingsOp[]): Promise<void> {
-    const revision = this.getSnapshot().revision
+  private async writeOps(ops: readonly SettingsOp[], expectedRevision?: number): Promise<void> {
+    const revision = expectedRevision ?? this.getSnapshot().revision
     let response
     try {
       response = await this.api.mutate({
         ns: this.spec.namespace,
-        ops,
+        ops: [...ops],
         ...revision === undefined ? {} : { expectedRevision: revision },
       })
     } catch {

@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AudiogenApi } from './api.ts'
 import type { AudiogenConfig, AudiogenScope } from './settings-scope.ts'
 import { audioModelOptions } from './settings-scope.ts'
-import { globalFieldSpecs, overrideRowSpecs, presetLabel, type FieldSpec } from './field-specs.ts'
+import { globalFieldSpecs, overrideRowSpecs, presetLabel, fieldOptionsFor, type FieldSpec } from './field-specs.ts'
 import { tt } from './helpers.ts'
 import {
   HISTORY_API,
@@ -87,7 +87,7 @@ function overrideSpread(override: Record<string, string>): Partial<GenerateAudio
   if (speed !== undefined) out.speed = speed
   const emotion = (override.emotion ?? '').trim()
   if (emotion !== '') out.emotion = emotion
-  const sampleRate = num('sample_rate')
+  const sampleRate = num('sampleRate')
   if (sampleRate !== undefined) out.sampleRate = sampleRate
   const bitrate = num('bitrate')
   if (bitrate !== undefined) out.bitrate = bitrate
@@ -97,7 +97,7 @@ function overrideSpread(override: Record<string, string>): Partial<GenerateAudio
   if (seed !== undefined) out.seed = seed
   const steps = num('steps')
   if (steps !== undefined) out.steps = steps
-  const cfgScale = num('cfg_scale')
+  const cfgScale = num('cfgScale')
   if (cfgScale !== undefined) out.cfgScale = cfgScale
   return out
 }
@@ -442,6 +442,17 @@ export function StudioView(props: {
 
   // 按（模式 × 渠道集合）计算全局字段：对比模式只留共有字段，独有字段在覆盖矩阵中。
   const globalSpecs = useMemo(() => globalFieldSpecs(mode, fieldPresets), [mode, fieldPresets])
+
+  // ElevenLabs 音效：格式为 pcm/ulaw/alaw 时无码率、ulaw/alaw 仅 8000Hz——按所选格式隐藏不适用的参数，避免组合出非法 output_format。
+  const effectiveSpecs = useMemo(() => {
+    if (mode !== 'sfx') return globalSpecs
+    const elevenOnly = fieldPresets.length > 0 && fieldPresets.every(preset => preset.toLowerCase() === 'elevenlabs')
+    if (!elevenOnly) return globalSpecs
+    const codec = format.trim().toLowerCase()
+    if (codec === 'ulaw' || codec === 'alaw') return globalSpecs.filter(spec => spec.key !== 'sampleRate' && spec.key !== 'bitrate')
+    if (codec === 'pcm') return globalSpecs.filter(spec => spec.key !== 'bitrate')
+    return globalSpecs
+  }, [mode, fieldPresets, format, globalSpecs])
 
   // 模型下拉按渠道分组。
   const groupedModels = useMemo(() => {
@@ -891,7 +902,7 @@ export function StudioView(props: {
           <label className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
             <select className={css.input} value={sampleRate} onChange={event => setSampleRate(event.target.value)}>
-              <option value="">默认（44100）</option>
+              <option value="">{spec.placeholder ?? '默认'}</option>
               {(spec.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}
             </select>
           </label>
@@ -901,7 +912,7 @@ export function StudioView(props: {
           <label className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
             <select className={css.input} value={bitrate} onChange={event => setBitrate(event.target.value)}>
-              <option value="">默认（256000）</option>
+              <option value="">{spec.placeholder ?? '默认'}</option>
               {(spec.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}
             </select>
           </label>
@@ -1249,7 +1260,7 @@ export function StudioView(props: {
                                 }))
                               }}>
                                 <option value="">自动</option>
-                                {row.options!.map(option => <option key={option} value={option}>{option}</option>)}
+                                {(fieldOptionsFor(row.key, entry.preset, mode) ?? row.options ?? []).map(option => <option key={option} value={option}>{option}</option>)}
                               </select>
                             ) : (
                               <input
@@ -1292,19 +1303,19 @@ export function StudioView(props: {
           )
         ) : null}
 
-        {globalSpecs.some(spec => spec.advanced !== true) ? <p className={css.formSection}>生成参数</p> : null}
+        {effectiveSpecs.some(spec => spec.advanced !== true) ? <p className={css.formSection}>生成参数</p> : null}
         <div className={css.formFields}>
-          {globalSpecs.filter(spec => spec.advanced !== true).map(spec => (
+          {effectiveSpecs.filter(spec => spec.advanced !== true).map(spec => (
             <div key={spec.key} className={spec.key === 'lyrics' || spec.key === 'toneText' ? css.fieldFull : css.fieldCell}>
               {renderField(spec)}
             </div>
           ))}
         </div>
 
-        {mode === 'tts' && globalSpecs.some(spec => spec.advanced === true) ? (
+        {mode === 'tts' && effectiveSpecs.some(spec => spec.advanced === true) ? (
           <details className={css.advanced}>
             <summary>MiniMax 高级参数</summary>
-            {globalSpecs.filter(spec => spec.advanced === true).map(spec => renderField(spec))}
+            {effectiveSpecs.filter(spec => spec.advanced === true).map(spec => renderField(spec))}
           </details>
         ) : null}
 

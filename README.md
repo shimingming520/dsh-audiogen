@@ -15,7 +15,7 @@
 
 - **Four generation modes**: text-to-speech, music, sound effects, and voice design
 - **Multi-vendor channels in one place**: OpenAI-compatible TTS, MiniMax, ElevenLabs, Stability AI, or any custom OpenAI-compatible / generic POST endpoint
-- **Per-channel model & voice catalogs** with one-click discovery, display aliases, capability categories, and per-model advanced fields (duration, seed, steps, cfg_scale, loop, prompt influence, …)
+- **Per-channel model & voice catalogs** with one-click discovery, display aliases, capability categories, and per-model advanced fields (duration, seed, steps, cfg_scale, loop, prompt influence, and ElevenLabs SFX output format split into format/sample rate/bitrate, combined host-side into the single `output_format`, …)
 - **Model comparison**: run the same prompt across 2–4 models at once with per-model parameter overrides — results are grouped side by side
 - **Prompt enhancement**: rewrite a rough idea into a ready-to-generate description with an LLM (pick any model from *Settings → Models*; falls back to the agent default model)
 - **History with one-click restore**: prompt, config, model set *and the original audio* come back into the panel — no regeneration, no extra cost
@@ -72,7 +72,7 @@ Restart `dsh web` after install — the sidebar will show the **AI Audio** entry
 | --- | --- | --- | --- | --- |
 | TTS | ✅ (8 voices) | ✅ (voices + streams) | — | ✅ |
 | Music | ✅ (`music-3.0` / `music-2.6` / `music-cover`) | ✅ (`music_v2`) | ✅ (`stable-audio-*`) | ✅ (generic POST) |
-| Sound effects | — | ✅ (`eleven_text_to_sound_v2`, loop / prompt influence) | ✅ (`stable-audio-*` — same text-to-audio protocol; auto-detected in both Music and SFX) | ✅ (generic POST) |
+| Sound effects | — | ✅ (`eleven_text_to_sound_v2`, loop / prompt influence / output format as codec+sample rate+bitrate → `output_format`) | ✅ (`stable-audio-*` — same text-to-audio protocol; auto-detected in both Music and SFX) | ✅ (generic POST) |
 | Voice design | ✅ (`/v1/voice_design`) | ✅ (`/v1/text-to-voice/design`) | — | — |
 
 ## 🤖 Agent usage

@@ -245,6 +245,77 @@ async function openAITTS(channel: AudioChannel, request: GenerateAudioRequest, s
   return normalizeAudioResponse(response, { apiKey: channel.apiKey, fallbackMime: 'audio/mpeg' })
 }
 
+// ------------- ElevenLabs output_format（codec_sample_rate_bitrate） -------------
+// 官方把输出格式编码为单个枚举（如 mp3_22050_32 / pcm_44100 / opus_48000_32），
+// 面板/工具把「格式、采样率、码率」拆成三个参数，这里负责组合成 output_format。
+// 组合规则见 /v1/sound-generation API 文档：codec_sample_rate_bitrate；
+// MP3 192kbps 需 Creator 及以上订阅、44.1kHz PCM 需 Pro 及以上订阅（由上游校验）。
+export const ELEVENLABS_OUTPUT_FORMATS: Record<string, {
+  /** 该编码合法的采样率（Hz）。 */
+  sampleRates: number[]
+  /** 采样率 → 合法码率（kbps）；缺省表示该编码不带码率（pcm/ulaw/alaw）。 */
+  bitrates?: Record<number, number[]>
+  /** 未指定采样率/码率时使用的默认值。 */
+  defaultSampleRate: number
+  defaultBitrate?: number
+}> = {
+  mp3: {
+    sampleRates: [22050, 24000, 44100],
+    bitrates: { 22050: [32], 24000: [48], 44100: [32, 64, 96, 128, 192] },
+    defaultSampleRate: 44100,
+    defaultBitrate: 128,
+  },
+  pcm: { sampleRates: [8000, 16000, 22050, 24000, 32000, 44100, 48000], defaultSampleRate: 44100 },
+  ulaw: { sampleRates: [8000], defaultSampleRate: 8000 },
+  alaw: { sampleRates: [8000], defaultSampleRate: 8000 },
+  opus: { sampleRates: [48000], bitrates: { 48000: [32] }, defaultSampleRate: 48000, defaultBitrate: 32 },
+}
+
+/**
+ * 把「格式 + 采样率 + 码率」组合为 ElevenLabs 的 output_format（codec_sample_rate_bitrate）。
+ * 三个参数都不给时返回 undefined（不发送该字段，交给上游默认）。
+ * 组合非法时给出可操作错误（列出合法值），而不是静默修改用户选择的参数。
+ * 注意码率单位：ElevenLabs 为 kbps（32/48/64/96/128/192），与 MiniMax 的 bps 不同。
+ */
+export function elevenLabsOutputFormat(request: Pick<GenerateAudioRequest, 'format' | 'sampleRate' | 'bitrate'>): string | undefined {
+  const format = (request.format ?? '').trim().toLowerCase()
+  const sampleRate = request.sampleRate
+  const bitrate = request.bitrate
+  if (format === '' && sampleRate === undefined && bitrate === undefined) return undefined
+  const codec = format === '' ? 'mp3' : format
+  const spec = ELEVENLABS_OUTPUT_FORMATS[codec]
+  if (spec === undefined) {
+    throw new AudioGenError(
+      `ElevenLabs 输出格式不支持「${codec}」：可用 ${Object.keys(ELEVENLABS_OUTPUT_FORMATS).join('/')}（output_format 为 codec_sample_rate_bitrate 组合枚举）`,
+      'audio-bad-format',
+    )
+  }
+  let resolvedRate = sampleRate
+  if (resolvedRate !== undefined && !spec.sampleRates.includes(resolvedRate)) {
+    throw new AudioGenError(`ElevenLabs ${codec} 输出采样率仅支持 ${spec.sampleRates.join('/')}Hz（实际 ${resolvedRate}Hz）`, 'audio-bad-format')
+  }
+  if (resolvedRate === undefined) resolvedRate = spec.defaultSampleRate
+  let resolvedBitrate: number | undefined = bitrate
+  if (resolvedBitrate !== undefined) {
+    const allowed = spec.bitrates?.[resolvedRate] ?? []
+    if (allowed.length === 0 || !allowed.includes(resolvedBitrate)) {
+      throw new AudioGenError(
+        `ElevenLabs ${codec}_${resolvedRate} 输出码率仅支持 ${allowed.length === 0 ? '无（该编码不带码率）' : allowed.join('/')}kbps（实际 ${resolvedBitrate}kbps）`,
+        'audio-bad-format',
+      )
+    }
+  }
+  if (resolvedBitrate === undefined) {
+    // 未给码率：优先编码级默认值（仅当该采样率支持时）；否则回填该采样率合法的首个码率
+    //（如 mp3_22050 只有 32kbps、mp3_24000 只有 48kbps），避免组合出 mp3_22050_128 这类非法值。
+    const rates = spec.bitrates?.[resolvedRate] ?? []
+    resolvedBitrate = spec.defaultBitrate !== undefined && rates.includes(spec.defaultBitrate)
+      ? spec.defaultBitrate
+      : rates[0]
+  }
+  return resolvedBitrate === undefined ? `${codec}_${resolvedRate}` : `${codec}_${resolvedRate}_${resolvedBitrate}`
+}
+
 async function elevenLabsOfficial(channel: AudioChannel, request: GenerateAudioRequest, signal?: AbortSignal): Promise<Array<{ data: Uint8Array; mime: string; voiceId?: string }>> {
   const base = endpointBase(channel.apiUrl)
   const model = (request.upstream ?? request.model) || 'eleven_multilingual_v2'
@@ -331,12 +402,15 @@ async function elevenLabsOfficial(channel: AudioChannel, request: GenerateAudioR
   // ------------- ElevenLabs Sound Effects（POST /v1/sound-generation） -------------
   // 官方模型：eleven_text_to_sound_v2；text 必填；duration_seconds 0.5-30；
   // loop 仅该模型可用；prompt_influence 0-1（默认 0.3）。
+  // output_format 由「格式/采样率/码率」三个面板参数组合为 codec_sample_rate_bitrate。
   if (request.mode === 'sfx') {
     const endpoint = `${base}/sound-generation`
     const sfxModel = (request.upstream ?? request.model) || 'eleven_text_to_sound_v2'
+    const outputFormat = elevenLabsOutputFormat(request)
     const body: Record<string, unknown> = {
       text: request.prompt,
       model_id: sfxModel,
+      ...(outputFormat === undefined ? {} : { output_format: outputFormat }),
       ...(request.duration !== undefined && Number.isFinite(request.duration)
         ? { duration_seconds: Math.min(30, Math.max(0.5, request.duration)) }
         : {}),

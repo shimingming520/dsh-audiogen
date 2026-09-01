@@ -15,7 +15,7 @@
 
 - **四种生成模式**：文本转语音（TTS）· 音乐生成 · 音效生成 · 音色设计
 - **多厂商渠道统一管理**：OpenAI 兼容 TTS、MiniMax、ElevenLabs、Stability AI，以及任意自定义 OpenAI 兼容 / 通用 POST 接口
-- **每渠道模型/音色目录**：一键「获取可用模型」、显示名称（alias）、能力分类（语音/音乐/音效/音色设计），按模型展示完整参数（时长、seed、steps、cfg_scale、loop、提示词影响度……）
+- **每渠道模型/音色目录**：一键「获取可用模型」、显示名称（alias）、能力分类（语音/音乐/音效/音色设计），按模型展示完整参数（时长、seed、steps、cfg_scale、loop、提示词影响度，ElevenLabs 音效输出格式拆为「格式/采样率/码率」三个参数、由引擎组合为 `output_format`……）
 - **模型对比**：同一提示词并发生成 2–4 个模型，支持每模型参数覆盖，结果按模型分组并列对比
 - **✨ 提示词增强**：把一句粗略想法扩写成适合生成模型的完整描述，LLM 模型可在「设置 → 模型」中任选（缺省跟随 Agent 默认模型，无需额外 API Key）
 - **历史记录一键恢复**：prompt、配置、模型组合**以及当时的音频**全部回到面板——可直接试听/下载，无需重新生成、不额外消耗
@@ -72,7 +72,7 @@ dsh plugin --profile web add /path/to/dsh-audiogen
 | --- | --- | --- | --- | --- |
 | TTS | ✅（8 种音色） | ✅（音色 + 流式） | — | ✅ |
 | 音乐 | ✅（`music-3.0` / `music-2.6` / `music-cover`） | ✅（`music_v2`） | ✅（`stable-audio-*`） | ✅（通用 POST） |
-| 音效 | — | ✅（`eleven_text_to_sound_v2`，loop / prompt_influence） | ✅（`stable-audio-*`，同一 text-to-audio 协议，自动识别为音乐+音效双模式） | ✅（通用 POST） |
+| 音效 | — | ✅（`eleven_text_to_sound_v2`，loop / prompt_influence / 输出格式 格式+采样率+码率 → `output_format`） | ✅（`stable-audio-*`，同一 text-to-audio 协议，自动识别为音乐+音效双模式） | ✅（通用 POST） |
 | 音色设计 | ✅（`/v1/voice_design`） | ✅（`/v1/text-to-voice/design`） | — | — |
 
 ## 🤖 Agent 使用

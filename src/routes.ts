@@ -9,7 +9,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
-import { SettingsConflictError, settingsNamespace, type SettingsDescriptor } from '@deepseek-ai/dsh-settings'
+import { SettingsConflictError, type SettingsDescriptor } from '@deepseek-ai/dsh-settings'
 import { generateAudio, AudioGenError, type AudioChannel } from './audio-engine.ts'
 import { listVendorVoices, listVendorVoicesWithFallback, deleteVendorVoice, type ListVoicesOptions, type VendorVoiceEntry } from './voice-manager.ts'
 import { recommendVoices, type VoiceRecommendation } from './voice-recommend.ts'
@@ -636,7 +636,7 @@ export function makeRoutes(deps: AudiogenRoutesDeps): WebRoute[] {  const guard 
         }
         const expectedRevision = typeof body.expectedRevision === 'number' ? body.expectedRevision : undefined
         try {
-          await deps.settings.mutate(settingsNamespace(ns), body.ops, expectedRevision)
+          await deps.settings.mutate(ns, body.ops, expectedRevision)
         } catch (error) {
           writeJson(res, 200, failureOf(error))
           return

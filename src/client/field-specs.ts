@@ -58,7 +58,7 @@ const MUSIC_FORMATS: Record<string, string[]> = {
 
 const MUSIC_KEYS: FieldKey[] = ['duration', 'format', 'lyrics', 'instrumental', 'sampleRate', 'bitrate']
 const TTS_KEYS: FieldKey[] = ['voice', 'speed', 'format', 'emotion', 'vol', 'pitch', 'toneText', 'sampleRate', 'bitrate', 'audioChannel', 'subtitle']
-const SFX_KEYS: FieldKey[] = ['duration', 'format', 'loop', 'promptInfluence', 'seed', 'steps', 'cfgScale']
+const SFX_KEYS: FieldKey[] = ['duration', 'format', 'sampleRate', 'bitrate', 'loop', 'promptInfluence', 'seed', 'steps', 'cfgScale']
 
 export function presetSupports(preset: string, key: FieldKey, mode: AudioMode): boolean {
   const p = preset.toLowerCase()
@@ -70,6 +70,8 @@ export function presetSupports(preset: string, key: FieldKey, mode: AudioMode): 
       return p === PRESET_MINIMAX || p === PRESET_ELEVENLABS
     case 'sampleRate':
     case 'bitrate':
+      // MiniMax：采样率/码率独立字段（audio_setting）；ElevenLabs 仅音效：与格式组合为 output_format。
+      return p === PRESET_MINIMAX || (mode === 'sfx' && p === PRESET_ELEVENLABS)
     case 'audioChannel':
       return p === PRESET_MINIMAX
     case 'emotion':
@@ -116,6 +118,34 @@ function specOf(key: FieldKey, presets?: string[]): FieldSpec {
   return { key, ...SPECS[key], ...(presets === undefined ? {} : { presets }) }
 }
 
+/** 各 preset 支持的音效输出编码（ElevenLabs 为 output_format 的 codec；Stability 为 mp3/wav）。 */
+const SFX_FORMATS: Record<string, string[]> = {
+  [PRESET_ELEVENLABS]: ['mp3', 'pcm', 'ulaw', 'alaw', 'opus'],
+  [PRESET_STABILITY]: ['mp3', 'wav'],
+}
+
+/** ElevenLabs 音效 output_format 的采样率（Hz）与码率（kbps）枚举。 */
+const ELEVENLABS_SFX_SAMPLE_RATES: string[] = ['8000', '16000', '22050', '24000', '32000', '44100', '48000']
+const ELEVENLABS_SFX_BITRATES: string[] = ['32', '48', '64', '96', '128', '192']
+
+/** 按（字段 × 渠道 preset × 模式）给出该字段的选项；未知组合返回 undefined（调用方回退全局选项）。
+ *  全局字段与「每模型覆盖」矩阵共用同一份枚举，避免两处选项不一致。 */
+export function fieldOptionsFor(key: FieldKey, preset: string, mode?: AudioMode): string[] | undefined {
+  const p = preset.toLowerCase()
+  if (key === 'format') {
+    if (mode === 'sfx') return SFX_FORMATS[p] ?? ['mp3', 'wav', 'pcm']
+    if (mode === 'music') return MUSIC_FORMATS[p] ?? ['mp3', 'wav', 'pcm']
+    return undefined
+  }
+  if (key === 'sampleRate') {
+    return p === PRESET_ELEVENLABS ? ELEVENLABS_SFX_SAMPLE_RATES : p === PRESET_MINIMAX ? SPECS.sampleRate.options : undefined
+  }
+  if (key === 'bitrate') {
+    return p === PRESET_ELEVENLABS ? ELEVENLABS_SFX_BITRATES : p === PRESET_MINIMAX ? SPECS.bitrate.options : undefined
+  }
+  return undefined
+}
+
 /** 当前模式 + 所选模型集合（渠道集合）对应的「全局字段」清单。 */
 export function globalFieldSpecs(mode: AudioMode | 'voice_recommend', presets: string[]): FieldSpec[] {
   if (mode === 'voice_recommend') return []
@@ -138,9 +168,30 @@ export function globalFieldSpecs(mode: AudioMode | 'voice_recommend', presets: s
     if (all('bitrate', MUSIC_KEYS) && presets.length > 0) list.push(specOf('bitrate'))
   } else if (mode === 'sfx') {
     list.push(specOf('duration'))
-    list.push({ ...specOf('format'), options: ['mp3', 'wav', 'pcm'] })
+    // 格式选项取所有选中渠道支持的交集（无交集则回退 mp3）
+    const supported: string[][] = presets.length === 0 ? [['mp3', 'wav', 'pcm']] : presets.map(preset => SFX_FORMATS[preset.toLowerCase()] ?? ['mp3', 'wav'])
+    const intersect: string[] = supported.reduce<string[]>((acc, cur) => acc.filter(item => cur.includes(item)), supported[0] ?? ['mp3'])
+    list.push({ ...specOf('format'), options: intersect.length > 0 ? intersect : ['mp3'] })
     if (all('loop', SFX_KEYS) && presets.length > 0) list.push(specOf('loop'))
     if (all('promptInfluence', SFX_KEYS) && presets.length > 0) list.push(specOf('promptInfluence'))
+    // ElevenLabs 音效：采样率/码率与格式组合为 output_format（codec_sample_rate_bitrate），由引擎统一组合。
+    if (all('sampleRate', SFX_KEYS) && presets.length > 0) {
+      list.push({
+        ...specOf('sampleRate'),
+        options: presets.flatMap(preset => fieldOptionsFor('sampleRate', preset, mode) ?? []),
+        placeholder: '默认（44100）',
+        hint: 'ElevenLabs 音效采样率（Hz）：与格式/码率组合为 output_format（如 mp3_22050_32）；pcm/ulaw/alaw 不带码率',
+      })
+    }
+    if (all('bitrate', SFX_KEYS) && presets.length > 0) {
+      list.push({
+        ...specOf('bitrate'),
+        label: '码率（kbps）',
+        options: presets.flatMap(preset => fieldOptionsFor('bitrate', preset, mode) ?? []),
+        placeholder: '默认（128）',
+        hint: 'ElevenLabs 音效码率（kbps，注意非 bps）：与格式/采样率组合为 output_format；192 需 Creator 及以上订阅',
+      })
+    }
     if (all('seed', SFX_KEYS) && presets.length > 0) list.push(specOf('seed'), specOf('steps'), specOf('cfgScale'))
   }
   return list
@@ -157,8 +208,9 @@ export function overrideRowSpecs(mode: AudioMode | 'voice_recommend'): Array<Fie
     ['speed', [PRESET_MINIMAX, PRESET_ELEVENLABS]],
     ['lyrics', [PRESET_MINIMAX, PRESET_ELEVENLABS]],
     ['instrumental', [PRESET_MINIMAX, PRESET_ELEVENLABS]],
-    ['sampleRate', [PRESET_MINIMAX]],
-    ['bitrate', [PRESET_MINIMAX]],
+    // 采样率/码率：MiniMax 独立字段（各模式）；ElevenLabs 仅音效与格式组合为 output_format。
+    ['sampleRate', mode === 'sfx' ? [PRESET_ELEVENLABS] : [PRESET_MINIMAX]],
+    ['bitrate', mode === 'sfx' ? [PRESET_ELEVENLABS] : [PRESET_MINIMAX]],
     ['audioChannel', [PRESET_MINIMAX]],
     ['emotion', [PRESET_MINIMAX]],
     ['vol', [PRESET_MINIMAX]],

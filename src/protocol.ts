@@ -8,7 +8,7 @@
 export const AUDIOGEN_SETTINGS_NAMESPACE = 'dsh-audiogen'
 
 /** Published package version shared by the host updater and the client UI. */
-export const PLUGIN_VERSION = '0.4.22'
+export const PLUGIN_VERSION = '0.4.24'
 
 /** Same-origin route family (loopback-only, mirroring dsh-imagegen). */
 export const SETTINGS_API = {
@@ -283,7 +283,7 @@ export interface GenerateAudioRequest {
   steps?: number
   /** Stable Audio 提示词遵循度（cfg_scale 1-25；stable-audio-2 默认 7，2.5/3 默认 1）。 */
   cfgScale?: number
-  /** Output format, e.g. mp3, wav, pcm. */
+  /** Output format. MiniMax mp3/wav/pcm; ElevenLabs 音效为编码名 mp3/pcm/ulaw/alaw/opus（与采样率、码率组合为 output_format）。 */
   format?: string
   /** Channel this request targets (host falls back to default). */
   channelId?: string
@@ -307,9 +307,9 @@ export interface GenerateAudioRequest {
   latexRead?: boolean
   /** MiniMax 发音词典 tone 条目，元素形如 "处理/(chu3)(li3)" 或 "危险/dangerous"。 */
   pronunciationTone?: string[]
-  /** MiniMax 采样率：16000/24000/32000.4.130/48000，默认 32000。 */
+  /** MiniMax 采样率：16000/24000/32000/44100，默认 32000（audio_setting.sample_rate）；ElevenLabs 音效为 8000-48000（与格式/码率组合为 output_format）。 */
   sampleRate?: number
-  /** MiniMax 码率（bps）：64000-320000，默认 128000。 */
+  /** MiniMax 码率（bps）：64000-320000，默认 128000；ElevenLabs 音效码率（kbps）：32/48/64/96/128/192（与格式/采样率组合为 output_format）。 */
   bitrate?: number
   /** MiniMax 声道数：1 或 2，默认 1。 */
   audioChannel?: number
