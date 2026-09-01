@@ -1,9 +1,9 @@
 /**
  * voice-cast 单元测试：角色画像解析/归一化、硬过滤（gender/age/use_case 严格、
  * accent 可放松）、save_cast 校验（成员校验/备份补齐/复用警告）与选定记录落盘。
- * 运行：node --test tests/voice-cast.test.ts
+ * 运行：pnpm test（vitest）
  */
-import { test, after } from 'node:test'
+import { test, afterAll } from 'vitest'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
@@ -247,7 +247,7 @@ test('prepareVoiceCast：MiniMax 无性别/年龄元数据时按语言+描述候
 // ------------------------------------------------------------ save_cast (mock fetch + temp DSH_HOME)
 
 const tmpDirs: string[] = []
-after(() => Promise.all(tmpDirs.map(dir => rm(dir, { recursive: true, force: true }))))
+afterAll(() => Promise.all(tmpDirs.map(dir => rm(dir, { recursive: true, force: true }))))
 
 async function withTempDshHome(run: () => Promise<void>): Promise<void> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'dsh-voice-cast-'))

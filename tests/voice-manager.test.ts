@@ -1,9 +1,9 @@
 /**
  * voice-manager 单元测试：mock globalThis.fetch，覆盖 MiniMax/ElevenLabs
  * 的音色列表（标准化+筛选）与删除保护逻辑。
- * 运行：node --test tests/voice-manager.test.ts
+ * 运行：pnpm test（vitest）
  */
-import { test } from 'node:test'
+import { test } from 'vitest'
 import assert from 'node:assert/strict'
 import {
   listVendorVoices,

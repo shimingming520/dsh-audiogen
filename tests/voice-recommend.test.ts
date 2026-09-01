@@ -1,9 +1,9 @@
 /**
  * voice-recommend 单元测试：纯函数部分（提示构造、JSON 松散解析、
  * voice_id 防幻觉校验）与推荐主流程（注入假 LLM runtime）。
- * 运行：node --test tests/voice-recommend.test.ts
+ * 运行：pnpm test（vitest）
  */
-import { test } from 'node:test'
+import { test } from 'vitest'
 import assert from 'node:assert/strict'
 import {
   parseVoiceRecommendations,
