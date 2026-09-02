@@ -965,10 +965,19 @@ export function StudioView(props: {
         )
       case 'loop':
         return (
-          <label className={css.checkbox} key={spec.key} title={spec.hint}>
-            <input type="checkbox" checked={loop} onChange={event => setLoop(event.target.checked)} />
+          <div className={css.label} key={spec.key} title={spec.hint}>
             <span>{spec.label}</span>
-          </label>
+            <div className={css.radioGroup}>
+              <label className={css.radioOption} data-active={loop ? 'true' : 'false'}>
+                <input type="radio" name="loop" checked={loop} onChange={() => setLoop(true)} />
+                <span>是</span>
+              </label>
+              <label className={css.radioOption} data-active={loop ? 'false' : 'true'}>
+                <input type="radio" name="loop" checked={!loop} onChange={() => setLoop(false)} />
+                <span>否</span>
+              </label>
+            </div>
+          </div>
         )
       case 'promptInfluence':
         return (

@@ -108,7 +108,7 @@ const SPECS: Record<FieldKey, Omit<FieldSpec, 'key' | 'presets'>> = {
   toneText: { label: '发音词典（每行一条："文字/读音"）', type: 'text', placeholder: '处理/(chu3)(li3)\n危险/dangerous', hint: 'pronunciation_dict.tone', advanced: true },
   subtitle: { label: '生成字幕 subtitle_enable', type: 'checkbox', hint: 'subtitle_enable', advanced: true },
   loop: { label: '循环音效 loop（无缝循环）', type: 'checkbox', hint: 'ElevenLabs loop（仅 eleven_text_to_sound_v2）' },
-  promptInfluence: { label: '提示词影响度 prompt_influence (0-1)', type: 'number', min: 0, max: 1, step: 0.1, placeholder: '0.3', hint: 'prompt_influence：越高越贴提示词' },
+  promptInfluence: { label: '提示词影响度 (0-1)', type: 'number', min: 0, max: 1, step: 0.1, placeholder: '0.3', hint: 'prompt_influence：越高越贴提示词' },
   seed: { label: 'seed', type: 'number', min: 0, max: 4294967294, placeholder: '默认（随机）', hint: 'Stable Audio seed（同参数可复现）' },
   steps: { label: 'steps', type: 'number', min: 4, max: 100, placeholder: '默认', hint: 'Stable Audio 采样步数（2: 30-100；2.5/3: 4-8）' },
   cfgScale: { label: 'cfg_scale', type: 'number', min: 1, max: 25, placeholder: '默认', hint: 'Stable Audio 提示词遵循度（2 默认 7，2.5/3 默认 1）' },
